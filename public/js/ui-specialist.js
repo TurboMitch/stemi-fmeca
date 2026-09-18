@@ -88,7 +88,49 @@ async function aiFillAll(opts={}) {
   try { await Promise.all(Array.from({length: Math.min(CONC, rows.length)}, worker)); }
   finally { C.save(); window.STEMI_UI.renderAll('specialist'); C.toast(fails ? `${rows.length-fails} regel(s) ingevuld, ${fails} mislukt – zie de kolom Status` : `AI heeft ${rows.length} regel(s) ingevuld`, 6000); }
 }
-function provBadge(sp, k) { const p = (sp.prov||{})[k]; if (!p) return '<span class="prov sys" title="systeemvoorstel (leeg veld)">sys</span>'; const b = BRON[p.bron]||[p.bron,p.bron]; return `<span class="prov ${b[1]}" title="${esc(p.bron)} · ${new Date(p.ts).toLocaleString('nl-NL')}${p.model?' · '+esc(p.model):''}">${b[0]}</span>`; }
+function provBadge(sp, k) { const p = (sp.prov||{})[k.startsWith('effect')?'effect':k]; if (!p) return '<span class="prov sys" title="systeemvoorstel (leeg veld)">sys</span>'; const b = BRON[p.bron]||[p.bron,p.bron]; return `<span class="prov ${b[1]}" title="${esc(p.bron)} · ${new Date(p.ts).toLocaleString('nl-NL')}${p.model?' · '+esc(p.model):''}">${b[0]}</span>`; }
+/** herkomst-icoon (i) per veld: opent een popover met bron, tijd, model, onderbouwing, systeemvoorstel, AI-voorstel en historie */
+function infoIcon(id, k) { return `<button type="button" class="info" data-info="${id}" data-k="${k}" title="Herkomst van dit veld">i</button>`; }
+const FIELD_LABEL = { faalwijze:'Faalwijze', O:'O (kans)', onderbouwingO:'Onderbouwing O', D:'D (detectie)', onderbouwingD:'Onderbouwing D', Tklasse:'T-klasse', Tjaar:'T (jaar)', maatregel:'Maatregel', restS:'Rest S', restO:'Rest O', restD:'Rest D', kostenSpecialist:'Kosten specialist', onderbouwingKosten:'Onderbouwing kosten', scopeOverride:'Scope' };
+function fieldLabel(k) { if (k.startsWith('effect') && k!=='effect') return `Effect · ${ASP[+k.slice(6)]||k}`; return FIELD_LABEL[k]||k; }
+/** systeemvoorstel voor een veld (wat de rekenkern zou invullen als het veld leeg is) */
+function sysValue(r, k) {
+  if (k==='faalwijze') return r.libE?.faalwijze; if (k==='O') return r.oSys!=null ? `${r.oSys} – ${r.oInfo?.uitleg||''}` : undefined;
+  if (k==='D') return r.dSys!=null ? `${r.dSys} – ${C.voorstelDtekst(r.insp.inspecteerbaarheid)}` : undefined;
+  if (k==='Tklasse') return r.tKlSys; if (k==='Tjaar') return r.tJaarSys; if (k==='kostenSpecialist') return r.eersteVoorstel!=null ? `€ ${r.eersteVoorstel} (begrotingshoeveelheid × kengetal)` : undefined;
+  if (k==='scopeOverride') return r.begrotingswijze; if (k.startsWith('effect')) return r.libE ? r.libE.effect[+k.slice(6)] + ' (gebrekenbibliotheek)' : undefined;
+  return undefined;
+}
+function aiValue(ai, k) { if (!ai) return undefined; if (k.startsWith('effect') && k!=='effect') return Array.isArray(ai.effect) ? ai.effect[+k.slice(6)] : undefined; return ai[k]; }
+function aiReason(ai, k) { if (!ai) return undefined; return k==='O'||k==='onderbouwingO'?ai.onderbouwingO: k==='D'||k==='onderbouwingD'?ai.onderbouwingD: k==='Tjaar'||k==='Tklasse'?ai.onderbouwingT: k.startsWith('effect')?ai.onderbouwingEffect: k==='kostenSpecialist'||k==='onderbouwingKosten'?ai.onderbouwingKosten: k==='maatregel'||k.startsWith('rest')?ai.restToelichting: undefined; }
+function closeInfo() { const p = $('#infoPop'); if (p) p.remove(); document.removeEventListener('mousedown', onDocDown, true); }
+function onDocDown(e) { const p = $('#infoPop'); if (p && !p.contains(e.target) && !e.target.closest('[data-info]')) closeInfo(); }
+function openInfo(btn) {
+  closeInfo(); const id = +btn.dataset.info, k = btn.dataset.k; const r = C.calc.rows.find(x=>x.id===id); if (!r) return; const sp = r.sp; const ai = C.state.ai[id];
+  const provKey = k.startsWith('effect') ? 'effect' : k; const p = (sp.prov||{})[provKey]; const b = p ? (BRON[p.bron]||[p.bron,p.bron]) : ['sys','sys'];
+  const fmt = v => Array.isArray(v) ? v.join(' · ') : (v==null||v===''?'—':String(v));
+  const cur = k.startsWith('effect') && k!=='effect' ? (sp.effect||[])[+k.slice(6)] : sp[k];
+  const hist = C.state.audit.filter(a => a.regel===id && (a.veld===k || (k.startsWith('effect') && a.veld==='effect'))).slice(0, 12);
+  const sys = sysValue(r, k), aiV = aiValue(ai, k), aiR = aiReason(ai, k);
+  const pop = document.createElement('div'); pop.id = 'infoPop'; pop.className = 'infopop';
+  pop.innerHTML = `<div class="infohead"><b>${esc(fieldLabel(k))}</b> · regel ${id}<span class="spacer"></span><span class="prov inl ${b[1]}">${esc(b[0])}</span><button type="button" class="x" id="infoClose" title="sluiten">×</button></div>
+    <dl>
+      <dt>Huidige waarde</dt><dd>${esc(fmt(cur))}${(cur==null||cur==='')&&sys!=null?` <span class="note">(leeg → systeemvoorstel geldt)</span>`:''}</dd>
+      <dt>Herkomst</dt><dd>${p ? `${esc(p.bron)} · ${new Date(p.ts).toLocaleString('nl-NL')}${p.model?` · <span class="mono">${esc(p.model)}</span>`:''}${p.user?` · ${esc(p.user)}`:''}` : 'systeemvoorstel (nog niet ingevuld)'}</dd>
+      ${p?.onderbouwing?`<dt>Onderbouwing bij invullen</dt><dd>${esc(p.onderbouwing)}</dd>`:''}
+      ${sys!=null?`<dt>Systeemvoorstel</dt><dd>${esc(String(sys))}</dd>`:''}
+      ${ai?`<dt>AI-voorstel</dt><dd>${esc(fmt(aiV))}${aiV!=null&&JSON.stringify(aiV)!==JSON.stringify(cur??null)?` <span class="warn">(wijkt af van huidig)</span>`:''}<div class="note">${esc(ai._model||'')} · ${new Date(ai._ts).toLocaleString('nl-NL')} · vertrouwen ${esc(ai.vertrouwen||'?')}</div>${aiR&&aiR!==p?.onderbouwing?`<div class="note">${esc(aiR)}</div>`:''}</dd>`:''}
+    </dl>
+    <h4>Historie (${hist.length})</h4>
+    ${hist.length?`<table class="diff"><tbody>${hist.map(h=>`<tr><td class="note">${new Date(h.ts).toLocaleString('nl-NL')}</td><td><span class="prov inl ${BRON[h.bron]?.[1]||''}">${esc(h.bron)}</span>${h.user?`<div class="note">${esc(h.user)}</div>`:''}</td><td>${esc(fmt(h.oud))} → ${esc(fmt(h.nieuw))}${h.model?`<div class="note">${esc(h.model)}</div>`:''}</td></tr>`).join('')}</tbody></table>`:'<p class="note">Nog niet gewijzigd.</p>'}
+    <div class="toolbar"><button type="button" class="btn ghost small" id="infoFull">Volledige verantwoording regel ${id}</button></div>`;
+  document.body.appendChild(pop);
+  const rect = btn.getBoundingClientRect(); const W = 420; let left = Math.min(rect.left, window.innerWidth - W - 12); let top = rect.bottom + 6;
+  pop.style.left = Math.max(8, left) + 'px'; pop.style.top = top + 'px';
+  requestAnimationFrame(() => { const h = pop.offsetHeight; if (top + h > window.innerHeight - 8) pop.style.top = Math.max(8, rect.top - h - 6) + 'px'; });
+  $('#infoClose').onclick = closeInfo; $('#infoFull').onclick = () => { closeInfo(); openAI(id); };
+  setTimeout(() => document.addEventListener('mousedown', onDocDown, true), 0);
+}
 
 function render() {
   const el = $('#tab-specialist'); const R = C.calc.rows; const nAI = R.filter(r=>C.state.ai[r.id]).length; const nMens = R.filter(r=>Object.values(r.sp.prov||{}).some(p=>p.bron==='mens')).length;
@@ -104,26 +146,27 @@ function render() {
       <label class="note"><input type="checkbox" id="showSys" ${C.cfg.showSys?'checked':''}> systeemvoorstellen tonen</label>
     </div>
     <div class="tablewrap"><table><thead><tr><th>ID</th><th>Element</th><th class="wrap">Constatering</th><th>Cond.</th><th class="wrap">Faalwijze</th><th>O</th><th class="wrap">Onderbouwing O</th><th>D</th><th class="wrap">Onderbouwing D</th><th>T-klasse</th><th>T jr</th>${ASP_SHORT.map((a,i)=>`<th title="${ASP[i]}">${a}</th>`).join('')}<th class="wrap">Maatregel</th><th>Rest S/O/D</th><th>Kosten spec. €</th><th class="wrap">Onderbouwing kosten</th><th>Scope</th><th>Status</th><th>Verantwoording</th></tr></thead><tbody>
-    ${R.map(r => { const sp = r.sp, id=r.id, ai = C.state.ai[id]; const P = k => provBadge(sp,k); return `<tr>
+    ${R.map(r => { const sp = r.sp, id=r.id, ai = C.state.ai[id]; const P = k => `<div class="provrow">${provBadge(sp,k)}${infoIcon(id,k)}</div>`; const I = k => `<div class="provrow">${infoIcon(id,k)}</div>`; return `<tr>
       <td>${id}</td><td>${esc(r.insp.element)}</td><td class="wrap">${esc(r.insp.constatering)}</td><td class="num">${r.insp.conditie??''}</td>
       <td class="oranje">${P('faalwijze')}<textarea data-sp="${id}" data-k="faalwijze" placeholder="${esc(r.libE?.faalwijze||'')}">${esc(sp.faalwijze||'')}</textarea>${C.cfg.showSys&&r.libE?`<div class="note">sys: ${esc(r.libE.faalwijze)}</div>`:''}</td>
       <td class="oranje">${P('O')}<input class="n" data-sp="${id}" data-k="O" value="${esc(sp.O??'')}" placeholder="${r.oSys}"><div class="note">${esc(C.oKlasse(r.O))}</div></td>
-      <td class="oranje"><textarea data-sp="${id}" data-k="onderbouwingO">${esc(sp.onderbouwingO||'')}</textarea>${C.cfg.showSys?`<div class="note">sys: ${esc(r.oInfo.uitleg)}${r.oInfo.ontbreekt.length?` <span class="warn">(ontbreekt: ${esc(r.oInfo.ontbreekt.join(', '))})</span>`:''}</div>`:''}</td>
+      <td class="oranje">${I('onderbouwingO')}<textarea data-sp="${id}" data-k="onderbouwingO">${esc(sp.onderbouwingO||'')}</textarea>${C.cfg.showSys?`<div class="note">sys: ${esc(r.oInfo.uitleg)}${r.oInfo.ontbreekt.length?` <span class="warn">(ontbreekt: ${esc(r.oInfo.ontbreekt.join(', '))})</span>`:''}</div>`:''}</td>
       <td class="oranje">${P('D')}<input class="n" data-sp="${id}" data-k="D" value="${esc(sp.D??'')}" placeholder="${r.dSys??''}"><div class="note">${esc(C.dKlasse(r.D))}</div>${C.cfg.showSys&&r.dSys?`<div class="note">sys: ${esc(C.voorstelDtekst(r.insp.inspecteerbaarheid))}</div>`:''}</td>
-      <td class="oranje"><textarea data-sp="${id}" data-k="onderbouwingD">${esc(sp.onderbouwingD||'')}</textarea></td>
+      <td class="oranje">${I('onderbouwingD')}<textarea data-sp="${id}" data-k="onderbouwingD">${esc(sp.onderbouwingD||'')}</textarea></td>
       <td class="oranje">${P('Tklasse')}<select data-sp="${id}" data-k="Tklasse"><option value="">(sys: ${esc(r.tKlSys)})</option>${tklassen().map(t=>`<option ${t===(sp.Tklasse||'')?'selected':''}>${t}</option>`).join('')}</select></td>
-      <td class="oranje"><input class="n" data-sp="${id}" data-k="Tjaar" value="${esc(sp.Tjaar??'')}" placeholder="${r.tJaarSys??'?'}"></td>
-      ${ASP.map((a,i)=>`<td class="oranje">${i===0?P('effect'):''}<input class="n" data-sp="${id}" data-k="effect${i}" value="${esc(sp.effect?.[i]??'')}" placeholder="${r.libE?r.libE.effect[i]:0}" title="${a}"></td>`).join('')}
+      <td class="oranje">${I('Tjaar')}<input class="n" data-sp="${id}" data-k="Tjaar" value="${esc(sp.Tjaar??'')}" placeholder="${r.tJaarSys??'?'}"></td>
+      ${ASP.map((a,i)=>`<td class="oranje">${i===0?P('effect0'):I('effect'+i)}<input class="n" data-sp="${id}" data-k="effect${i}" value="${esc(sp.effect?.[i]??'')}" placeholder="${r.libE?r.libE.effect[i]:0}" title="${a}"></td>`).join('')}
       <td class="oranje">${P('maatregel')}<textarea data-sp="${id}" data-k="maatregel">${esc(sp.maatregel||'')}</textarea></td>
-      <td class="oranje"><input class="n" data-sp="${id}" data-k="restS" value="${esc(sp.restS??'')}" placeholder="S"> <input class="n" data-sp="${id}" data-k="restO" value="${esc(sp.restO??'')}" placeholder="O"> <input class="n" data-sp="${id}" data-k="restD" value="${esc(sp.restD??'')}" placeholder="D"></td>
+      <td class="oranje">${I('restS')}<input class="n" data-sp="${id}" data-k="restS" value="${esc(sp.restS??'')}" placeholder="S"> <input class="n" data-sp="${id}" data-k="restO" value="${esc(sp.restO??'')}" placeholder="O"> <input class="n" data-sp="${id}" data-k="restD" value="${esc(sp.restD??'')}" placeholder="D"></td>
       <td class="oranje">${P('kostenSpecialist')}<input class="n" style="width:80px" data-sp="${id}" data-k="kostenSpecialist" value="${esc(sp.kostenSpecialist??'')}" placeholder="${r.eersteVoorstel??''}"></td>
-      <td class="oranje"><textarea data-sp="${id}" data-k="onderbouwingKosten">${esc(sp.onderbouwingKosten||'')}</textarea></td>
-      <td class="oranje"><select data-sp="${id}" data-k="scopeOverride"><option value="">(${esc(r.begrotingswijze||'–')})</option><option ${sp.scopeOverride==='Integraal uitvoeren'?'selected':''}>Integraal uitvoeren</option><option ${sp.scopeOverride==='Lokaal uitvoeren'?'selected':''}>Lokaal uitvoeren</option></select></td>
+      <td class="oranje">${I('onderbouwingKosten')}<textarea data-sp="${id}" data-k="onderbouwingKosten">${esc(sp.onderbouwingKosten||'')}</textarea></td>
+      <td class="oranje">${I('scopeOverride')}<select data-sp="${id}" data-k="scopeOverride"><option value="">(${esc(r.begrotingswijze||'–')})</option><option ${sp.scopeOverride==='Integraal uitvoeren'?'selected':''}>Integraal uitvoeren</option><option ${sp.scopeOverride==='Lokaal uitvoeren'?'selected':''}>Lokaal uitvoeren</option></select></td>
       <td><span class="tag">${esc(r.aiStatus)}</span>${ai?`<div class="note">vertrouwen ${esc(ai.vertrouwen||'?')}</div>`:''}<div data-rowstatus="${id}">${statusHtml(id)}</div></td>
       <td><button class="btn small" data-ai="${id}">${ai?'Verantwoording':'AI invullen'}</button></td></tr>`; }).join('')}
     </tbody></table></div>`;
   $$('[data-sp]').forEach(i => i.onchange = () => { const id=+i.dataset.sp, k=i.dataset.k; C.setSp(id, k, i.value, 'mens'); const sp=C.getSp(id); if (k==='Tklasse' && i.value && sp.Tjaar == null) C.setSp(id,'Tjaar',C.tJaarVanKlasse(i.value),'systeem'); C.save(); window.STEMI_UI.renderAll('specialist'); });
   $$('[data-ai]').forEach(b => b.onclick = () => openAI(+b.dataset.ai));
+  $$('[data-info]').forEach(b => b.onclick = e => { e.stopPropagation(); openInfo(b); });
   $('#aiAll').onclick = () => aiFillAll({overschrijf: $('#aiOverschrijf').checked});
   $('#aiNew').onclick = () => aiFillAll({alleenNieuw:true, overschrijf: $('#aiOverschrijf').checked});
   $('#aiChat').onclick = openChat;
