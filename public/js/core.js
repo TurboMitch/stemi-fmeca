@@ -57,7 +57,7 @@ function defaultSettings(seed) {
 let seed=null, lib=[], libByCode={}, state=null, cfg=null, calc=null;
 
 function emptyState() {
-  return { versie:2, settings: defaultSettings(seed), inspectie: clone(seed.inspectie), raw: null, specialist: clone(seed.specialist).map(s=>({...s, prov: Object.fromEntries(SP_FIELDS.filter(k=>s[k]!=null&&s[k]!=='').map(k=>[k,{bron:'excel',ts:'2026-09-16'}]))})), besluiten: clone(seed.besluiten), maatregelen: [], ai: {}, audit: [] };
+  return { versie:2, project: { klant:'', object:'', adres:'', status:'nieuw', omschrijving:'' }, settings: defaultSettings(seed), inspectie: clone(seed.inspectie), raw: null, specialist: clone(seed.specialist).map(s=>({...s, prov: Object.fromEntries(SP_FIELDS.filter(k=>s[k]!=null&&s[k]!=='').map(k=>[k,{bron:'excel',ts:'2026-09-16'}]))})), besluiten: clone(seed.besluiten), maatregelen: [], ai: {}, audit: [] };
 }
 function migrateV1(old) {
   const st = emptyState();
@@ -243,7 +243,7 @@ function migrateSettings(S) {
   if (!S.scorekaarten.belangSchaal) S.scorekaarten.belangSchaal = clone(seed.scorekaarten.belangSchaal);
 }
 function setState(st) {
-  state = st && st.inspectie ? st : emptyState();
+  state = st && st.inspectie ? st : emptyState(); state.project = state.project || { klant:'', object:'', adres:'', status:'actief', omschrijving:'' };
   if (!state.settings) state.settings = defaultSettings(seed); if (!state.settings.rules) state.settings.rules = defaultRules();
   migrateSettings(state.settings); syncAspects();
   state.maatregelen = state.maatregelen || []; state.audit = state.audit || []; state.ai = state.ai || {}; state.besluiten = state.besluiten || []; state.specialist = state.specialist || [];

@@ -22,10 +22,13 @@ async function token() {
 }
 
 // ---------- dossiers ----------
-async function listDossiers() { const { data, error } = await sb.from('dossiers').select('id,naam,versie,updated_at,updated_by').order('updated_at', { ascending: false }); if (error) throw error; return data; }
+async function listDossiers() { const { data, error } = await sb.from('dossiers').select('id,naam,meta,versie,created_at,updated_at,updated_by,created_by').order('updated_at', { ascending: false }); if (error) throw error; const ids = [...new Set(data.flatMap(d=>[d.updated_by,d.created_by]).filter(Boolean))]; let names = {}; if (ids.length) { const { data: pr } = await sb.from('profiles').select('id,username,display_name').in('id', ids); (pr||[]).forEach(p => names[p.id] = p.display_name || p.username); } return data.map(d => ({ ...d, updated_by_naam: names[d.updated_by]||'', created_by_naam: names[d.created_by]||'' })); }
+/** metadata die de projectenlijst nodig heeft zonder de hele state te laden */
+function metaVan(state) { const pj = state.project || {}; return { klant: pj.klant||'', object: pj.object||'', adres: pj.adres||'', status: pj.status||'', omschrijving: pj.omschrijving||'', regels: (state.inspectie||[]).length, ai: Object.keys(state.ai||{}).length, profiel: state.settings?.naam||'' }; }
 async function openDossier(id) { const { data, error } = await sb.from('dossiers').select('*').eq('id', id).single(); if (error) throw error; dossier = data; localStorage.setItem('stemi_dossier', id); return data; }
-async function createDossier(naam, state) { const { data, error } = await sb.from('dossiers').insert({ naam, state, created_by: user.id, updated_by: user.id }).select().single(); if (error) throw error; dossier = data; localStorage.setItem('stemi_dossier', data.id); return data; }
+async function createDossier(naam, state) { const { data, error } = await sb.from('dossiers').insert({ naam, state, meta: metaVan(state), created_by: user.id, updated_by: user.id }).select().single(); if (error) throw error; dossier = data; localStorage.setItem('stemi_dossier', data.id); return data; }
 async function renameDossier(naam) { const { error } = await sb.from('dossiers').update({ naam, updated_by: user.id }).eq('id', dossier.id); if (error) throw error; dossier.naam = naam; }
+async function duplicateDossier(id, naam, opts={}) { const { data: src, error } = await sb.from('dossiers').select('state').eq('id', id).single(); if (error) throw error; const st = JSON.parse(JSON.stringify(src.state)); if (opts.alleenInstellingen) { st.inspectie = []; st.specialist = []; st.besluiten = []; st.maatregelen = []; st.ai = {}; st.audit = []; st.raw = null; st.project = { ...(st.project||{}), klant: opts.klant||'', object: opts.object||'', adres: opts.adres||'', status: 'nieuw', omschrijving: opts.omschrijving||'' }; } else { st.project = { ...(st.project||{}), ...(opts.project||{}) }; } return createDossier(naam, st); }
 async function deleteDossier(id) { const { error } = await sb.from('dossiers').delete().eq('id', id); if (error) throw error; if (dossier?.id === id) { dossier = null; localStorage.removeItem('stemi_dossier'); } }
 
 /** state opslaan (debounced). Conflictdetectie op versie: als een ander de dossier intussen wijzigde, wordt de remote versie geladen. */
@@ -35,7 +38,7 @@ async function flush(state) {
   try {
     const { data: cur } = await sb.from('dossiers').select('versie,updated_by').eq('id', dossier.id).single();
     if (cur && cur.versie !== dossier.versie && cur.updated_by !== user.id) { setStatus('conflict – herladen'); saving = false; if (confirm('Dit dossier is intussen door een andere gebruiker gewijzigd. Herladen met hun versie? (Annuleren = jouw versie opslaan en hun wijzigingen overschrijven)')) { location.reload(); return; } }
-    const { data, error } = await sb.from('dossiers').update({ state, updated_by: user.id }).eq('id', dossier.id).select('versie,updated_at').single();
+    const { data, error } = await sb.from('dossiers').update({ state, meta: metaVan(state), updated_by: user.id }).eq('id', dossier.id).select('versie,updated_at').single();
     if (error) throw error; dossier.versie = data.versie; dossier.updated_at = data.updated_at; dirty = false; setStatus('opgeslagen ' + new Date().toLocaleTimeString('nl-NL'));
   } catch (e) { console.error(e); setStatus('opslaan mislukt: ' + e.message, true); }
   saving = false;
@@ -57,5 +60,5 @@ function showLogin(onDone) {
   const form = $('#loginForm'); form.onsubmit = async e => { e.preventDefault(); const st = $('#loginStatus'); st.innerHTML = '<span class="spin"></span>inloggen…'; try { await login($('#loginUser').value, $('#loginPass').value); ov.classList.add('hidden'); onDone(); } catch (err) { st.innerHTML = `<span class="warn">${err.message}</span>`; } };
   setTimeout(() => $('#loginUser').focus(), 50);
 }
-return { sb, init, login, logout, token, get user(){return user}, get profile(){return profile}, get dossier(){return dossier}, listDossiers, openDossier, createDossier, renameDossier, deleteDossier, persist, flush, logAudit, logAiRun, auditFromDb, getSetting, setSetting, showLogin, setStatus };
+return { sb, init, login, logout, token, get user(){return user}, get profile(){return profile}, get dossier(){return dossier}, listDossiers, openDossier, createDossier, renameDossier, duplicateDossier, deleteDossier, metaVan, persist, flush, logAudit, logAiRun, auditFromDb, getSetting, setSetting, showLogin, setStatus };
 })();
