@@ -13,6 +13,7 @@
 <header class="top">
   <div class="brand"><span class="dot"></span><b>STEMI</b> Waardegestuurd FMECA → MJOP</div>
   <nav class="tabs" id="tabs">
+    <button data-tab="projecten">Projecten</button>
     <button data-tab="overzicht" class="active">Overzicht</button>
     <button data-tab="eigenaar">01 AM-wizard</button>
     <button data-tab="inspectie">02 Inspectie</button>
@@ -30,6 +31,7 @@
   </div>
 </header>
 <main id="main">
+  <section id="tab-projecten" class="tab"></section>
   <section id="tab-overzicht" class="tab active"></section>
   <section id="tab-eigenaar" class="tab"></section>
   <section id="tab-inspectie" class="tab"></section>
@@ -56,7 +58,7 @@
 <script>
 // modules sequentieel laden met retry (robuust tegen incidentele CDN-fouten)
 (async () => {
-  const files = ['core','db','ui-wizard','ui-inspectie','ui-specialist','ui-mjop','ui-rest','main'];
+  const files = ['core','db','ui-wizard','ui-inspectie','ui-specialist','ui-mjop','ui-rest','ui-projecten','main'];
   const load = src => new Promise((ok, fail) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => fail(new Error(src)); document.body.appendChild(s); });
   for (const f of files) { let done = false; for (let i = 0; i < 4 && !done; i++) { try { await load(`/js/${f}.js?v=3${i ? '&r=' + i : ''}`); done = true; } catch (e) { await new Promise(r => setTimeout(r, 400 * (i + 1))); } }
     if (!done) { document.body.innerHTML = '<p style="padding:20px">Laden mislukt (' + f + '). Herlaad de pagina.</p>'; return; } }

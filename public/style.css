@@ -125,3 +125,5 @@ tr.sub td{border-top:0}
 .infopop ol.lineage{margin:0 0 6px;padding-left:18px}
 .infopop ol.lineage li{margin:3px 0;padding-left:2px}
 .infopop ol.lineage li::marker{color:var(--accent);font-weight:700}
+.projsel{display:inline-flex;align-items:center;gap:6px}
+.projsel select{max-width:260px;font-weight:600;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--card);font:inherit}
