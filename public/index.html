@@ -53,13 +53,14 @@
     <p id="loginStatus" class="note" style="margin:10px 0 0"></p>
   </form>
 </div>
-<script src="/js/core.js"></script>
-<script src="/js/db.js"></script>
-<script src="/js/ui-wizard.js"></script>
-<script src="/js/ui-inspectie.js"></script>
-<script src="/js/ui-specialist.js"></script>
-<script src="/js/ui-mjop.js"></script>
-<script src="/js/ui-rest.js"></script>
-<script src="/js/main.js"></script>
+<script>
+// modules sequentieel laden met retry (robuust tegen incidentele CDN-fouten)
+(async () => {
+  const files = ['core','db','ui-wizard','ui-inspectie','ui-specialist','ui-mjop','ui-rest','main'];
+  const load = src => new Promise((ok, fail) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => fail(new Error(src)); document.body.appendChild(s); });
+  for (const f of files) { let done = false; for (let i = 0; i < 4 && !done; i++) { try { await load(`/js/${f}.js?v=3${i ? '&r=' + i : ''}`); done = true; } catch (e) { await new Promise(r => setTimeout(r, 400 * (i + 1))); } }
+    if (!done) { document.body.innerHTML = '<p style="padding:20px">Laden mislukt (' + f + '). Herlaad de pagina.</p>'; return; } }
+})();
+</script>
 </body>
 </html>
