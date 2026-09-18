@@ -127,3 +127,6 @@ tr.sub td{border-top:0}
 .infopop ol.lineage li::marker{color:var(--accent);font-weight:700}
 .projsel{display:inline-flex;align-items:center;gap:6px}
 .projsel select{max-width:260px;font-weight:600;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--card);font:inherit}
+
+.qbar{height:8px;background:var(--line);border-radius:4px;width:160px;overflow:hidden}.qbar div{height:100%}.qbar .ok{background:#3aa66a}.qbar .mid{background:#e0a020}.qbar .low{background:#d64545}
+[data-map]{min-width:170px;max-width:220px}
