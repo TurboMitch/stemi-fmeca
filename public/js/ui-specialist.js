@@ -103,6 +103,35 @@ function sysValue(r, k) {
 }
 function aiValue(ai, k) { if (!ai) return undefined; if (k.startsWith('effect') && k!=='effect') return Array.isArray(ai.effect) ? ai.effect[+k.slice(6)] : undefined; return ai[k]; }
 function aiReason(ai, k) { if (!ai) return undefined; return k==='O'||k==='onderbouwingO'?ai.onderbouwingO: k==='D'||k==='onderbouwingD'?ai.onderbouwingD: k==='Tjaar'||k==='Tklasse'?ai.onderbouwingT: k.startsWith('effect')?ai.onderbouwingEffect: k==='kostenSpecialist'||k==='onderbouwingKosten'?ai.onderbouwingKosten: k==='maatregel'||k.startsWith('rest')?ai.restToelichting: undefined; }
+/** welke inspectievelden (tab 02) voeden dit veld – voor de herleiding */
+const INSP_INPUTS = { O:['intensiteit','hoevGebrek','hoevTotaal','ontwikkelingKlasse','ontwikkeling','conditie','ernst'], onderbouwingO:['intensiteit','hoevGebrek','hoevTotaal','ontwikkelingKlasse','ontwikkeling','conditie'], D:['inspecteerbaarheid','bewijs'], onderbouwingD:['inspecteerbaarheid','bewijs'], Tklasse:['nenCode','ernst','ontwikkeling','ontwikkelingKlasse'], Tjaar:['nenCode','ernst','ontwikkeling','ontwikkelingKlasse'], faalwijze:['gebrek','nenCode','constatering'], effect:['nenCode','gebrek','element','object'], maatregel:['gebrek','constatering','maatregel'], restS:['gebrek'], restO:['gebrek'], restD:['inspecteerbaarheid'], kostenSpecialist:['hoevGebrek','hoevTotaal','eenheid','kengetal','maatregel'], onderbouwingKosten:['hoevGebrek','hoevTotaal','kengetal'], scopeOverride:['hoevGebrek','hoevTotaal'] };
+const INSP_LABEL = { intensiteit:'Intensiteit', hoevGebrek:'Hoeveelheid met gebrek', hoevTotaal:'Hoeveelheid totaal', ontwikkelingKlasse:'Ontwikkelingsklasse', ontwikkeling:'Ontwikkeling (tekst)', conditie:'NEN-conditie', ernst:'Ernst', inspecteerbaarheid:'Inspecteerbaarheid', bewijs:'Bewijs', nenCode:'NEN-gebrekcode', gebrek:'Gebrek', constatering:'Constatering', element:'Element', object:'Object', maatregel:'Standaardmaatregel', eenheid:'Eenheid', kengetal:'Kengetal €/eenheid' };
+function bronLabel(b) { return b==='ai'?'AI-agent': b==='mens'?'technisch specialist (handmatig)': b==='excel'?'Excel-model V2, tabblad 03 (technisch specialist)': b==='systeem'?'systeemvoorstel (rekenkern)': (b||'onbekend'); }
+/** bouwt de keten: inspecteur → bibliotheek → rekenkern → AI → specialist, plus de oorsprong van de startwaarde */
+function lineageHtml(r, k, sp, ai, hist) {
+  const i = r.insp; const fmt = v => (v==null||v===''?'—':Array.isArray(v)?v.join(' · '):String(v));
+  const provKey = k.startsWith('effect') ? 'effect' : k; const p = (sp.prov||{})[provKey];
+  const steps = [];
+  // 1. inspecteur
+  const inputs = (INSP_INPUTS[provKey]||INSP_INPUTS[k]||[]).filter(f => i[f]!=null && i[f]!=='');
+  const inspEdits = C.state.audit.filter(a => a.regel===r.id && typeof a.veld==='string' && a.veld.startsWith('inspectie.') && inputs.includes(a.veld.slice(10)));
+  const rowOrigin = i._rawRef ? `geïmporteerd uit <b>${esc(i._rawRef.bestand)}</b>, rij ${i._rawRef.rij} (${new Date(i._rawRef.ts).toLocaleString('nl-NL')})` : (C.state.raw?.length ? 'handmatig ingevoerd in tab 02' : 'voorbeelddata uit het Excel-model V2, tabblad 02 (inspecteur)');
+  steps.push(`<li><b>Inspecteur · tab 02</b> – ${rowOrigin}${inputs.length?`<div class="note">${inputs.map(f=>`${INSP_LABEL[f]||f}: <b>${esc(fmt(i[f]))}</b>`).join(' · ')}</div>`:''}${inspEdits.length?`<div class="note">later aangepast in tab 02: ${inspEdits.map(a=>`${INSP_LABEL[a.veld.slice(10)]||a.veld} ${esc(fmt(a.oud))} → ${esc(fmt(a.nieuw))} (${esc(a.user||'mens')}, ${new Date(a.ts).toLocaleString('nl-NL')})`).join('; ')}</div>`:''}</li>`);
+  // 2. bibliotheek
+  if (['faalwijze','effect','Tklasse','Tjaar'].includes(provKey) && i.nenCode) steps.push(`<li><b>Gebrekenbibliotheek</b> – code ${esc(i.nenCode)}${r.libE?`: ${esc(r.libE.bouwdeel||'')} / ${esc(r.libE.gebreksoort||'')}${provKey==='faalwijze'?` → faalwijze “${esc(r.libE.faalwijze)}”`:provKey==='effect'?` → effectvoorstel [${r.libE.effect.join(', ')}]`:''}${C.state.settings.bibliotheekOverrides?.[i.nenCode]?' <span class="warn">(organisatie-override)</span>':''}`:' <span class="warn">niet gevonden</span>'}</li>`);
+  // 3. rekenkern
+  const sys = sysValue(r, k); if (sys!=null) steps.push(`<li><b>Systeemvoorstel · rekenkern</b> – ${esc(String(sys))} <span class="note">(regels uit het instellingenprofiel “${esc(C.state.settings.naam||'')}”)</span></li>`);
+  // 4. startwaarde
+  const oldest = hist.length ? hist[hist.length-1] : null;
+  const startBron = oldest ? (oldest.vorige || (oldest.oud==null||oldest.oud===''?'systeem':'excel')) : (p?.bron);
+  if (oldest) steps.push(`<li><b>Startwaarde</b> – ${esc(fmt(oldest.oud))}${oldest.oud==null||oldest.oud===''?' (leeg → systeemvoorstel gold)':''}: ${esc(bronLabel(startBron))}</li>`);
+  // 5. AI
+  if (ai) { const ver = (ai.verificatie||[]).find(v => v.veld===k || v.veld===provKey); steps.push(`<li><b>AI-agent</b> – ${esc(ai._model||'')}, ${new Date(ai._ts).toLocaleString('nl-NL')} → voorstel <b>${esc(fmt(aiValue(ai,k)))}</b>${ver?` · verificatie van de bestaande waarde ${esc(fmt(ver.huidig))}: <span class="tag">${esc(ver.oordeel)}</span> ${esc(ver.reden||'')}`:''}${ai.gebruikteBronnen?.length?`<div class="note">doorslaggevend volgens de agent: ${esc(ai.gebruikteBronnen.join('; '))}</div>`:''}</li>`); }
+  // 6. mens
+  const mens = hist.filter(h => h.bron==='mens'); if (mens.length) steps.push(`<li><b>Technisch specialist</b> – ${mens.map(h=>`${esc(h.user||'mens')} ${new Date(h.ts).toLocaleString('nl-NL')}: ${esc(fmt(h.oud))} → ${esc(fmt(h.nieuw))}`).join('; ')}</li>`);
+  steps.push(`<li><b>Huidige waarde</b> – <b>${esc(fmt(k.startsWith('effect')&&k!=='effect'?(sp.effect||[])[+k.slice(6)]:sp[k]))}</b> · laatst gezet door ${esc(bronLabel(p?.bron||'systeem'))}${p?` op ${new Date(p.ts).toLocaleString('nl-NL')}`:''}</li>`);
+  return `<h4>Herleiding</h4><ol class="lineage">${steps.join('')}</ol>`;
+}
 function closeInfo() { const p = $('#infoPop'); if (p) p.remove(); document.removeEventListener('mousedown', onDocDown, true); }
 function onDocDown(e) { const p = $('#infoPop'); if (p && !p.contains(e.target) && !e.target.closest('[data-info]')) closeInfo(); }
 function openInfo(btn) {
@@ -110,7 +139,7 @@ function openInfo(btn) {
   const provKey = k.startsWith('effect') ? 'effect' : k; const p = (sp.prov||{})[provKey]; const b = p ? (BRON[p.bron]||[p.bron,p.bron]) : ['sys','sys'];
   const fmt = v => Array.isArray(v) ? v.join(' · ') : (v==null||v===''?'—':String(v));
   const cur = k.startsWith('effect') && k!=='effect' ? (sp.effect||[])[+k.slice(6)] : sp[k];
-  const hist = C.state.audit.filter(a => a.regel===id && (a.veld===k || (k.startsWith('effect') && a.veld==='effect'))).slice(0, 12);
+  const hist = C.state.audit.filter(a => a.regel===id && (a.veld===k || (k.startsWith('effect') && a.veld==='effect')));
   const sys = sysValue(r, k), aiV = aiValue(ai, k), aiR = aiReason(ai, k);
   const pop = document.createElement('div'); pop.id = 'infoPop'; pop.className = 'infopop';
   pop.innerHTML = `<div class="infohead"><b>${esc(fieldLabel(k))}</b> · regel ${id}<span class="spacer"></span><span class="prov inl ${b[1]}">${esc(b[0])}</span><button type="button" class="x" id="infoClose" title="sluiten">×</button></div>
@@ -121,8 +150,9 @@ function openInfo(btn) {
       ${sys!=null?`<dt>Systeemvoorstel</dt><dd>${esc(String(sys))}</dd>`:''}
       ${ai?`<dt>AI-voorstel</dt><dd>${esc(fmt(aiV))}${aiV!=null&&JSON.stringify(aiV)!==JSON.stringify(cur??null)?` <span class="warn">(wijkt af van huidig)</span>`:''}<div class="note">${esc(ai._model||'')} · ${new Date(ai._ts).toLocaleString('nl-NL')} · vertrouwen ${esc(ai.vertrouwen||'?')}</div>${aiR&&aiR!==p?.onderbouwing?`<div class="note">${esc(aiR)}</div>`:''}</dd>`:''}
     </dl>
+    ${lineageHtml(r, k, sp, ai, hist)}
     <h4>Historie (${hist.length})</h4>
-    ${hist.length?`<table class="diff"><tbody>${hist.map(h=>`<tr><td class="note">${new Date(h.ts).toLocaleString('nl-NL')}</td><td><span class="prov inl ${BRON[h.bron]?.[1]||''}">${esc(h.bron)}</span>${h.user?`<div class="note">${esc(h.user)}</div>`:''}</td><td>${esc(fmt(h.oud))} → ${esc(fmt(h.nieuw))}${h.model?`<div class="note">${esc(h.model)}</div>`:''}</td></tr>`).join('')}</tbody></table>`:'<p class="note">Nog niet gewijzigd.</p>'}
+    ${hist.length?`<table class="diff"><tbody>${hist.slice(0,12).map(h=>`<tr><td class="note">${new Date(h.ts).toLocaleString('nl-NL')}</td><td><span class="prov inl ${BRON[h.bron]?.[1]||''}">${esc(h.bron)}</span>${h.user?`<div class="note">${esc(h.user)}</div>`:''}${h.vorige?`<div class="note">was: ${esc(h.vorige)}</div>`:''}</td><td>${esc(fmt(h.oud))} → ${esc(fmt(h.nieuw))}${h.model?`<div class="note">${esc(h.model)}</div>`:''}</td></tr>`).join('')}</tbody></table>`:'<p class="note">Nog niet gewijzigd.</p>'}
     <div class="toolbar"><button type="button" class="btn ghost small" id="infoFull">Volledige verantwoording regel ${id}</button></div>`;
   document.body.appendChild(pop);
   const rect = btn.getBoundingClientRect(); const W = 420; let left = Math.min(rect.left, window.innerWidth - W - 12); let top = rect.bottom + 6;
@@ -192,7 +222,7 @@ function openAI(id) {
     ${ai.onzekerheden?.length?`<h3>Onzekerheden</h3><ul>${ai.onzekerheden.map(o=>`<li>${esc(o)}</li>`).join('')}</ul>`:''}
     <details><summary>Input naar de agent (herleidbaarheid)</summary><pre class="mono pre">${esc(JSON.stringify(ai._input,null,1))}</pre></details>
     <details><summary>Ruwe JSON van de agent</summary><pre class="mono pre">${esc(JSON.stringify(ai,null,1))}</pre></details>` : '<p class="note" style="margin-top:12px">Nog geen AI-voorstel voor deze regel.</p>'}
-    <h3>Wijzigingshistorie (${hist.length})</h3>${hist.length?`<table class="diff"><tbody>${hist.map(h=>`<tr><td class="note">${new Date(h.ts).toLocaleString('nl-NL')}</td><td><b>${esc(h.veld)}</b> <span class="prov ${BRON[h.bron]?.[1]||''}">${esc(h.bron)}</span></td><td>${esc(fmt(h.oud))} → ${esc(fmt(h.nieuw))}${h.model?`<div class="note">${esc(h.model)}</div>`:''}</td></tr>`).join('')}</tbody></table>`:'<p class="note">Geen wijzigingen vastgelegd.</p>'}`;
+    <h3>Wijzigingshistorie (${hist.length})</h3>${hist.length?`<table class="diff"><tbody>${hist.slice(0,12).map(h=>`<tr><td class="note">${new Date(h.ts).toLocaleString('nl-NL')}</td><td><b>${esc(h.veld)}</b> <span class="prov ${BRON[h.bron]?.[1]||''}">${esc(h.bron)}</span></td><td>${esc(fmt(h.oud))} → ${esc(fmt(h.nieuw))}${h.model?`<div class="note">${esc(h.model)}</div>`:''}</td></tr>`).join('')}</tbody></table>`:'<p class="note">Geen wijzigingen vastgelegd.</p>'}`;
   $('#aiRun').onclick = async () => { if(!C.cfg.apiKey){window.STEMI_UI.switchTab('instellingen');C.toast('Vul eerst een OpenRouter-sleutel in');return;} const st=$('#aiStatus'); st.innerHTML='<span class="spin"></span>agent denkt…'; $('#aiRun').disabled=true; try { await analyzeRow(id, $('#aiExtra').value.trim()); openAI(id); } catch(e) { st.innerHTML=`<span class="warn">${esc(e.message)}</span>`; $('#aiRun').disabled=false; } };
   $$('[data-apply]', body).forEach(b => b.onclick = () => { applyAI(id, [b.dataset.apply], true); C.recompute(); render(); openAI(id); });
   const all = $('#aiApplyAll'); if (all) all.onclick = () => { const n = applyAI(id, AI_FIELDS.map(f=>f[0]), $('#aiOv2').checked); C.recompute(); render(); openAI(id); C.toast(`${n} veld(en) overgenomen`); };

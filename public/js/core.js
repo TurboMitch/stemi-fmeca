@@ -78,8 +78,9 @@ function setSp(id, k, v, bron, meta={}) {
   else if (SP_NUM.includes(k)) sp[k] = num(v);
   else sp[k] = v ?? '';
   const key = k.startsWith('effect') ? 'effect' : k;
-  sp.prov[key] = { bron, ts: new Date().toISOString(), ...meta };
-  audit({ regel:id, veld:k, oud: old, nieuw: v, bron, ...meta });
+  const vorige = sp.prov[key] ? sp.prov[key].bron : (old==null||old===''? 'systeem' : undefined);
+  sp.prov[key] = { bron, ts: new Date().toISOString(), vorige, ...meta };
+  audit({ regel:id, veld:k, oud: old, nieuw: v, bron, vorige, ...meta });
 }
 
 // ---------- rekenkern ----------
