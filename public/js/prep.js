@@ -89,6 +89,54 @@ function applyRules(o, rules, ctx) {
   return o;
 }
 
+/** koppeltabel (verrijking): doelvelden + herkenning van kolomkoppen */
+const LOOKUP_FIELDS = [
+  ['kengetalVervangen', 'Kengetal vervangen €/eenheid', /vervang/i], ['kengetalHerstellen', 'Kengetal herstellen €/eenheid', /herstel|repar/i], ['kengetalReinigen', 'Kengetal reinigen €/eenheid', /reinig|schoonmaak/i],
+  ['kengetal', 'Kengetal (één bedrag) €/eenheid', /^(kengetal|prijs|eenheidsprijs|tarief|kosten)/i], ['maatregel', 'Standaard maatregel', /maatregel|activiteit|handeling/i], ['prijspeil', 'Prijspeil / bron', /prijspeil|peildatum|bron/i],
+  ['omslagMaatregel', 'Omslag% maatregel', /omslag/i], ['cyclus', 'Cyclus (jaar)', /cyclus|interval|frequentie/i], ['levensduur', 'Levensduur (jaar)', /levensduur|lifetime/i], ['eenheidKosten', 'Eenheid van het kengetal', /eenheid|unit/i]
+];
+const LOOKUP_KEYS = [['elementcode', 'Elementcode software'], ['nenCode', 'NEN gebrekcode'], ['elementId', 'Element-ID software'], ['element', 'Elementnaam'], ['object', 'Object']];
+function autoMapLookup(headers) {
+  const map = {}; const used = new Set();
+  // sleutelkolom: eerste kolom die op een code lijkt
+  const keyCol = headers.findIndex(h => /elementcode|code|nencode|gebrekcode|elementid|id$/i.test(h)); if (keyCol >= 0) { map._key = keyCol; used.add(keyCol); }
+  const excl = headers.map(h => /exc|excl/i.test(h)), incl = headers.map(h => /inc(l)?\b|incl/i.test(h)); const heeftExcl = excl.some(Boolean);
+  for (const [k, , re] of LOOKUP_FIELDS) { headers.forEach((h, i) => { if (used.has(i) || map[k] != null || !re.test(h)) return; if (heeftExcl && incl[i] && !excl[i]) return; map[k] = i; used.add(i); }); }
+  return map;
+}
+/** kiest per gebrekregel het passende kengetal uit vervangen/herstellen/reinigen op basis van ernst, gebreksoort en intensiteit */
+function kiesKengetal(row, kg) {
+  const v = num(kg.kengetalVervangen), h = num(kg.kengetalHerstellen), r = num(kg.kengetalReinigen), enkel = num(kg.kengetal);
+  if (enkel != null && enkel > 0) return { kengetal: enkel, maatregel: kg.maatregel || null, keuze: 'kengetal uit koppeltabel' };
+  const pre = (row.gebrekPrefix || '').toUpperCase(); const soort = pre[1] || ''; const ernst = pre[0] || (row.ernst || '')[0];
+  const txt = ((row.gebrek || '') + ' ' + (row.constatering || '')).toLowerCase();
+  const opties = [];
+  if (soort === 'A' || soort === 'O' || /vuil|aanslag|verkleur|alg|mos|reinig/.test(txt)) opties.push(['Reinigen', r]);
+  const gevorderd = row.intensiteit === 'Gevorderd' || row.intensiteit === 'Eindstadium';
+  if ((soort === 'V' && (gevorderd || /75|87|100/.test(txt)) && !/50 %|50%/.test(txt)) || row.intensiteit === 'Eindstadium' || /vervang|einde levensduur|defect|kapot/.test(txt)) opties.push(['Vervangen', v]);
+  opties.push(['Herstellen', h], ['Vervangen', v], ['Reinigen', r]);
+  const gekozen = opties.find(([, x]) => x != null && x > 0);
+  if (!gekozen) return { kengetal: null, maatregel: null, keuze: 'geen kengetal > 0 in koppeltabel' };
+  return { kengetal: gekozen[1], maatregel: gekozen[0], keuze: `${gekozen[0].toLowerCase()} gekozen o.b.v. ${ernst ? 'ernst ' + ernst : ''}${soort ? ' gebreksoort ' + soort : ''}${row.intensiteit ? ' intensiteit ' + row.intensiteit : ''}`.replace(/\s+/g, ' ').trim() };
+}
+/** past een koppeltabel toe op de inspectieregels; geeft statistiek terug */
+function applyLookup(inspectie, lk, opts = {}) {
+  const key = opts.key || 'elementcode'; const idx = {}; const normKey = v => String(v ?? '').trim().toUpperCase();
+  lk.rows.forEach((r, i) => { const k = normKey(r[lk.map._key]); if (k && idx[k] == null) idx[k] = i; });
+  let gematcht = 0, zonderKengetal = 0; const nietGevonden = new Set();
+  for (const row of inspectie) {
+    const k = normKey(row[key]); if (!k) { nietGevonden.add('(leeg)'); continue; } const i = idx[k]; if (i == null) { nietGevonden.add(k); continue; }
+    const r = lk.rows[i]; const kg = {}; for (const [f] of LOOKUP_FIELDS) if (lk.map[f] != null && r[lk.map[f]] != null && r[lk.map[f]] !== '') kg[f] = /^kengetal|omslag|cyclus|levensduur/.test(f) ? num(String(r[lk.map[f]]).replace(',', '.')) : r[lk.map[f]];
+    const keuze = kiesKengetal(row, kg); gematcht++;
+    row.kengetallen = { vervangen: kg.kengetalVervangen ?? null, herstellen: kg.kengetalHerstellen ?? null, reinigen: kg.kengetalReinigen ?? null, eenheid: kg.eenheidKosten || row.eenheid || null, bron: lk.name, rij: i + 1, keuze: keuze.keuze };
+    if (keuze.kengetal != null && (opts.overschrijf || row.kengetal == null)) { row.kengetal = keuze.kengetal; row.kengetalBron = `${lk.name} r${i + 1} · ${keuze.keuze}`; } else if (keuze.kengetal == null) zonderKengetal++;
+    if (keuze.maatregel && (opts.overschrijf || !row.maatregel)) row.maatregel = kg.maatregel || keuze.maatregel;
+    if (kg.prijspeil && !row.prijspeil) row.prijspeil = kg.prijspeil; if (kg.omslagMaatregel != null && row.omslagMaatregel == null) row.omslagMaatregel = kg.omslagMaatregel;
+    if (kg.cyclus != null) row.cyclus = kg.cyclus; if (kg.levensduur != null) row.levensduur = kg.levensduur;
+  }
+  return { gematcht, zonderKengetal, nietGevonden: [...nietGevonden] };
+}
+
 /** datakwaliteit van de inspectieset: vulling per veld dat de rekenkern/AI nodig heeft */
 function quality(inspectie) {
   const n = inspectie.length || 1; const f = (k, test) => inspectie.filter(r => test ? test(r) : (r[k] != null && r[k] !== '')).length;
@@ -110,5 +158,5 @@ function vindProfiel(headers, profielen) {
 }
 function pasProfielToe(imp, p) { const map = {}; for (const k in p.map) { const i = imp.headers.findIndex(h => norm(h) === norm(p.map[k])); if (i >= 0) map[k] = i; } imp.map = map; imp.profielNaam = p.naam; imp.profielToegepast = true; }
 
-return { detectRules, applyRules, matchLib, quality, profielVan, vindProfiel, pasProfielToe, PREFIX_RE, isGuid };
+return { detectRules, applyRules, matchLib, quality, profielVan, vindProfiel, pasProfielToe, PREFIX_RE, isGuid, LOOKUP_FIELDS, LOOKUP_KEYS, autoMapLookup, kiesKengetal, applyLookup };
 })();

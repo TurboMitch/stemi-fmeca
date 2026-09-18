@@ -37,6 +37,7 @@ function normValue(k, v) {
   return v;
 }
 let imp = null; // {name, headers, rows, map}
+let lk = null;  // koppeltabel {name, headers, rows, map, key}
 
 function parseText(text) {
   const wb = XLSX.read(text, {type:'string'}); const ws = wb.Sheets[wb.SheetNames[0]]; return XLSX.utils.sheet_to_json(ws, {header:1, defval:null});
@@ -48,6 +49,22 @@ function startImport(name, aoa) {
   const P = window.STEMI_PREP; const prof = P.vindProfiel(headers, C.state.settings.importProfielen); if (prof) P.pasProfielToe(imp, prof.p);
   imp.rules = P.detectRules(imp); if (prof) for (const r of imp.rules) { const pr = prof.p.rules.find(x => x.id === r.id); if (pr) r.aan = pr.aan; }
   render();
+}
+function startLookup(name, aoa) {
+  const hi = aoa.findIndex(r => r && r.filter(x => x != null && x !== '').length >= 2); if (hi < 0) { alert('Geen tabel gevonden'); return; }
+  const headers = aoa[hi].map(h => h == null ? '' : String(h)); const rows = aoa.slice(hi+1).filter(r => r && r.some(x => x != null && x !== ''));
+  const P = window.STEMI_PREP; lk = { name, headers, rows, map: P.autoMapLookup(headers), key: 'elementcode', overschrijf: false, ts: new Date().toISOString() };
+  const prof = C.state.settings.koppelProfielen?.[name.replace(/\.[^.]+$/,'')]; if (prof) { const m = {}; for (const k in prof.map) { const i = headers.findIndex(h => h === prof.map[k]); if (i >= 0) m[k] = i; } if (m._key != null) { lk.map = m; lk.key = prof.key; lk.profielToegepast = true; } }
+  render();
+}
+function applyLookup() {
+  const S = C.state; const P = window.STEMI_PREP; if (lk.map._key == null) { C.toast('Kies de sleutelkolom in de koppeltabel'); return; }
+  const stat = P.applyLookup(S.inspectie, lk, { key: lk.key, overschrijf: lk.overschrijf });
+  S.raw = S.raw || []; S.raw.push({ bestand: lk.name, ts: lk.ts, headers: lk.headers, rows: lk.rows.slice(0, 1000), map: lk.map, aantal: lk.rows.length, mode: 'koppeltabel', sleutel: lk.key, stat });
+  S.settings.koppelProfielen = S.settings.koppelProfielen || {}; const byName = {}; for (const k in lk.map) byName[k] = lk.headers[lk.map[k]]; S.settings.koppelProfielen[lk.name.replace(/\.[^.]+$/,'')] = { map: byName, key: lk.key, ts: lk.ts };
+  C.audit({ veld:'inspectie.koppeltabel', bron:'mens', nieuw:`${lk.name}: ${stat.gematcht}/${S.inspectie.length} regels gekoppeld op ${lk.key}; ${stat.zonderKengetal} zonder kengetal > 0; niet gevonden: ${stat.nietGevonden.length}` });
+  lk = null; C.save(); window.STEMI_UI.renderAll('inspectie');
+  C.toast(`Koppeltabel toegepast: ${stat.gematcht}/${S.inspectie.length} regels gekoppeld${stat.nietGevonden.length?`, ${stat.nietGevonden.length} sleutel(s) niet gevonden`:''}${stat.zonderKengetal?`, ${stat.zonderKengetal} zonder bruikbaar kengetal`:''}`, 8000);
 }
 function applyImport() {
   const S = C.state; const map = imp.map; const startId = imp.mode === 'replace' ? 1 : Math.max(0, ...S.inspectie.map(x=>x.id)) + 1;
@@ -88,15 +105,16 @@ function qualityHtml(S) {
 function render() {
   const el = $('#tab-inspectie'); const S = C.state;
   if (imp) return renderMapping(el);
-  const cols = [['object','Object'],['bouwdeel','Bouwdeel'],['element','Element'],['locatie','Locatie'],['constatering','Constatering','wrap'],['gebrek','NEN gebrek','wrap'],['gebreksoort','Gebreksoort'],['ernst','Ernst','sel',C.ERNST],['intensiteit','Intensiteit','sel',C.INTENSITEIT],['hoevTotaal','Totaal','n'],['eenheid','Eenh.'],['hoevGebrek','Met gebrek','n'],['conditie','Conditie','n'],['ontwikkeling','Ontwikkeling / observatie','wrap'],['ontwikkelingKlasse','Ontwikkeling (klasse)','sel',C.ONTWIKKELING],['inspecteerbaarheid','Inspecteerbaar','sel',C.INSPECTEERBAAR],['onderzoek','Onderzoek?','sel',['','Ja','Nee']],['toelichting','Toelichting inspecteur','wrap'],['maatregel','Std. maatregel','wrap'],['kengetal','€/eenheid','n'],['omslagMaatregel','Omslag% maatregel','n'],['nenCode','NEN code']];
+  if (lk) return renderLookup(el);
+  const cols = [['object','Object'],['bouwdeel','Bouwdeel'],['element','Element'],['locatie','Locatie'],['constatering','Constatering','wrap'],['gebrek','NEN gebrek','wrap'],['gebreksoort','Gebreksoort'],['ernst','Ernst','sel',C.ERNST],['intensiteit','Intensiteit','sel',C.INTENSITEIT],['hoevTotaal','Totaal','n'],['eenheid','Eenh.'],['hoevGebrek','Met gebrek','n'],['conditie','Conditie','n'],['ontwikkeling','Ontwikkeling / observatie','wrap'],['ontwikkelingKlasse','Ontwikkeling (klasse)','sel',C.ONTWIKKELING],['inspecteerbaarheid','Inspecteerbaar','sel',C.INSPECTEERBAAR],['onderzoek','Onderzoek?','sel',['','Ja','Nee']],['toelichting','Toelichting inspecteur','wrap'],['maatregel','Std. maatregel','wrap'],['kengetal','€/eenheid','n'],['kengetalInfo','Kengetal bron','info'],['omslagMaatregel','Omslag% maatregel','n'],['nenCode','NEN code']];
   el.innerHTML = `
     <h2>02 Inspectie NEN 2767</h2><p class="sub">Objectieve technische evidence per gebrek – dit is <b>data</b>: ruw aangeleverd (export onderhoudssoftware, inspectie-app, CSV) of gestandaardiseerd. <span class="tag">GEEL = inspecteur</span> <span class="tag">GROEN = berekend</span></p>
     <div class="card" style="margin-bottom:14px"><b>Data-dump inladen</b>
-      <div class="toolbar"><label class="btn">Bestand (CSV / XLSX)<input type="file" id="rawFile" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xls" hidden></label><button class="btn ghost" id="rawPaste">Plakken (tabel uit Excel/CSV)</button><button class="btn ghost" id="addInsp">+ Lege regel</button><span class="spacer"></span><span class="note">${S.raw?.length ? `${S.raw.length} import(s) bewaard voor herleidbaarheid` : 'Nog geen ruwe import'}</span></div>
+      <div class="toolbar"><label class="btn">Bestand (CSV / XLSX)<input type="file" id="rawFile" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xls" hidden></label><button class="btn ghost" id="rawPaste">Plakken (tabel uit Excel/CSV)</button><label class="btn ghost" title="Tweede bestand koppelen op elementcode/NEN-code: kengetallen, maatregelen, prijspeil">Koppeltabel (kengetallen)<input type="file" id="lkFile" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xls" hidden></label><button class="btn ghost" id="addInsp">+ Lege regel</button><span class="spacer"></span><span class="note">${S.raw?.length ? `${S.raw.length} import(s) bewaard voor herleidbaarheid` : 'Nog geen ruwe import'}</span></div>
       <textarea id="rawText" class="hidden" rows="6" style="width:100%" placeholder="Plak hier een tabel met kopregel (tab- of ;-gescheiden)…"></textarea><div id="rawTextBtns" class="hidden toolbar"><button class="btn" id="rawTextGo">Kolommen koppelen →</button></div>
     </div>
     <div class="tablewrap"><table><thead><tr><th>ID</th>${cols.map(c=>`<th class="${c[2]==='wrap'?'wrap':''}">${c[1]}</th>`).join('')}<th>Omvang</th><th>Kosten element</th><th>Kosten lokaal</th><th>Begrotingswijze</th><th>1e voorstel</th><th class="wrap">Bibliotheek</th><th>Bron</th><th></th></tr></thead><tbody>
-    ${S.inspectie.map(insp => { const r = C.calc.rows.find(x=>x.id===insp.id) || {}; return `<tr><td>${insp.id}</td>${cols.map(c=>{const v=insp[c[0]]??''; if(c[2]==='sel') return `<td class="geel"><select data-insp="${insp.id}" data-k="${c[0]}"><option value=""></option>${c[3].map(o=>`<option ${o===v?'selected':''}>${o}</option>`).join('')}</select></td>`; if(c[2]==='wrap') return `<td class="geel"><textarea data-insp="${insp.id}" data-k="${c[0]}">${esc(v)}</textarea></td>`; return `<td class="geel"><input class="${c[2]==='n'?'n':''}" data-insp="${insp.id}" data-k="${c[0]}" value="${esc(v)}"></td>`;}).join('')}
+    ${S.inspectie.map(insp => { const r = C.calc.rows.find(x=>x.id===insp.id) || {}; return `<tr><td>${insp.id}</td>${cols.map(c=>{const v=insp[c[0]]??''; if(c[2]==='info') return `<td class="note" style="max-width:220px">${insp.kengetallen?`${esc(insp.kengetallen.keuze||'')}<br>V ${insp.kengetallen.vervangen??'–'} · H ${insp.kengetallen.herstellen??'–'} · R ${insp.kengetallen.reinigen??'–'} <span title="${esc(insp.kengetallen.bron||'')} r${insp.kengetallen.rij||''}">(${esc((insp.kengetallen.bron||'').replace(/\.[^.]+$/,''))})</span>`:(insp.kengetalBron?esc(insp.kengetalBron):'')}</td>`; if(c[2]==='sel') return `<td class="geel"><select data-insp="${insp.id}" data-k="${c[0]}"><option value=""></option>${c[3].map(o=>`<option ${o===v?'selected':''}>${o}</option>`).join('')}</select></td>`; if(c[2]==='wrap') return `<td class="geel"><textarea data-insp="${insp.id}" data-k="${c[0]}">${esc(v)}</textarea></td>`; return `<td class="geel"><input class="${c[2]==='n'?'n':''}" data-insp="${insp.id}" data-k="${c[0]}" value="${esc(v)}"></td>`;}).join('')}
       <td class="num groen">${pct(r.omvang)}</td><td class="num groen">${eur(r.kostenElement)}</td><td class="num groen">${eur(r.kostenLokaal)}</td><td class="groen">${r.begrotingswijze||''}</td><td class="num groen">${eur(r.eersteVoorstel)}</td><td class="wrap groen">${r.libE?`<b>${esc(r.libE.bouwdeel)}</b> · ${esc(r.libE.omschrijving)}${insp.nenMatch?` <span class="tag" title="score ${insp.nenMatch.score} · ${esc(insp.nenMatch.kandidaten?.[0]?.reden||'')}">match ${esc(insp.nenMatch.zeker)}</span>`:''}`:(insp.nenCode?'<span class="warn">code onbekend</span>':(insp.nenMatch?`<span class="warn">geen zekere match</span><div class="note">kandidaten: ${insp.nenMatch.kandidaten.map(k=>`<a href="#" data-pick="${insp.id}|${k.code}" title="${esc(k.omschrijving)} (${k.score})">${k.code}</a>`).join(', ')}</div>`:'<span class="note">geen code</span>'))}</td><td class="note">${insp._rawRef?`${esc(insp._rawRef.bestand)} r${insp._rawRef.rij}`:'handmatig/Excel'}</td><td><button class="btn ghost small" data-del="${insp.id}">✕</button></td></tr>`; }).join('')}
     </tbody></table></div>
     ${S.inspectie.length ? qualityHtml(S) : ''}
@@ -106,6 +124,7 @@ function render() {
   $$('[data-pick]').forEach(a => a.onclick = e => { e.preventDefault(); const [id, code] = a.dataset.pick.split('|'); const insp = S.inspectie.find(x=>x.id===+id); C.audit({regel:insp.id, veld:'inspectie.nenCode', oud:insp.nenCode, nieuw:code, bron:'mens'}); insp.nenCode = code; C.save(); window.STEMI_UI.renderAll('inspectie'); });
   $$('[data-del]').forEach(b => b.onclick = () => { if(!confirm('Regel verwijderen?')) return; const id=+b.dataset.del; S.inspectie=S.inspectie.filter(x=>x.id!==id); S.specialist=S.specialist.filter(x=>x.id!==id); S.besluiten=S.besluiten.filter(x=>x.id!==id); S.maatregelen=S.maatregelen.filter(x=>x.regelId!==id); C.audit({regel:id, veld:'inspectie', nieuw:'verwijderd', bron:'mens'}); C.save(); window.STEMI_UI.renderAll('inspectie'); });
   $('#rawFile').onchange = e => { const f=e.target.files[0]; if(!f) return; const rd=new FileReader(); rd.onload = ev => { try { const wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array', raw:false}); const ws = wb.Sheets[wb.SheetNames.find(n=>/02|insp/i.test(n)) || wb.SheetNames[0]]; startImport(f.name, XLSX.utils.sheet_to_json(ws, {header:1, defval:null})); } catch(err) { alert('Kan bestand niet lezen: '+err.message); } }; rd.readAsArrayBuffer(f); e.target.value=''; };
+  $('#lkFile').onchange = e => { const f=e.target.files[0]; if(!f) return; if (!S.inspectie.length) { C.toast('Laad eerst de inspectiedata; de koppeltabel wordt daarop toegepast'); e.target.value=''; return; } const rd=new FileReader(); rd.onload = ev => { try { const wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array', raw:false}); const ws = wb.Sheets[wb.SheetNames.find(n=>/kost|kengetal|prijs/i.test(n)) || wb.SheetNames[0]]; startLookup(f.name, XLSX.utils.sheet_to_json(ws, {header:1, defval:null})); } catch(err) { alert('Kan bestand niet lezen: '+err.message); } }; rd.readAsArrayBuffer(f); e.target.value=''; };
   $('#rawPaste').onclick = () => { $('#rawText').classList.toggle('hidden'); $('#rawTextBtns').classList.toggle('hidden'); };
   $('#rawTextGo').onclick = () => { const t=$('#rawText').value; if(!t.trim()) return; startImport('geplakt-'+new Date().toISOString().slice(0,16), parseText(t)); };
 }
@@ -126,6 +145,23 @@ function renderMapping(el) {
   $$('[name=impMode]').forEach(r => r.onchange = () => imp.mode = r.value);
   $('#impGo').onclick = applyImport; $('#impCancel').onclick = () => { imp=null; render(); };
   $('#aiMap').onclick = () => { if(!C.cfg.apiKey){ C.toast('Vul eerst een OpenRouter-sleutel in (Instellingen)'); return; } aiMap(); };
+}
+function renderLookup(el) {
+  const P = window.STEMI_PREP; const S = C.state; const keyVals = new Set(S.inspectie.map(r => String(r[lk.key] ?? '').trim().toUpperCase()).filter(Boolean));
+  const lkKeys = lk.map._key != null ? new Set(lk.rows.map(r => String(r[lk.map._key] ?? '').trim().toUpperCase())) : new Set(); const hit = [...keyVals].filter(k => lkKeys.has(k)).length;
+  el.innerHTML = `<h2>02 Inspectie – koppeltabel toepassen</h2><p class="sub">Bestand <b>${esc(lk.name)}</b> · ${lk.rows.length} rijen · ${lk.headers.length} kolommen. De kolommen worden per regel gekoppeld aan de inspectiedata op een sleutel (bijv. elementcode). Kengetallen vervangen/herstellen/reinigen worden alle drie bewaard; per gebrek wordt het passende kengetal gekozen op ernst, gebreksoort en intensiteit – de specialist/AI kan daarvan afwijken.</p>
+    <div class="toolbar"><label class="note">Sleutel in inspectiedata <select id="lkKey">${P.LOOKUP_KEYS.map(([k,l])=>`<option value="${k}" ${lk.key===k?'selected':''}>${l}</option>`).join('')}</select></label>
+      <label class="note">Sleutelkolom in koppeltabel <select id="lkKeyCol"><option value="">—</option>${lk.headers.map((h,i)=>`<option value="${i}" ${lk.map._key===i?'selected':''}>${esc(h||('kolom '+(i+1)))}</option>`).join('')}</select></label>
+      <span class="tag">${hit} van ${keyVals.size} sleutels gevonden</span><label class="note"><input type="checkbox" id="lkOv" ${lk.overschrijf?'checked':''}> bestaande kengetallen/maatregelen overschrijven</label><span class="spacer"></span><button class="btn" id="lkGo">Toepassen</button><button class="btn ghost" id="lkCancel">Annuleren</button></div>
+    ${lk.profielToegepast?`<div class="card note">Koppelprofiel herkend en toegepast.</div>`:''}
+    ${hit < keyVals.size ? `<div class="card note warn">Niet gevonden in de koppeltabel: ${esc([...keyVals].filter(k=>!lkKeys.has(k)).slice(0,30).join(', '))}${keyVals.size-hit>30?' …':''}</div>`:''}
+    <div class="grid two"><div class="card"><table class="mini"><thead><tr><th>Doelveld</th><th>Bronkolom</th><th>Voorbeeld</th></tr></thead><tbody>
+    ${P.LOOKUP_FIELDS.map(([k,l])=>`<tr><td>${l}</td><td><select data-lkmap="${k}"><option value="">— niet koppelen —</option>${lk.headers.map((h,i)=>`<option value="${i}" ${lk.map[k]===i?'selected':''}>${esc(h||('kolom '+(i+1)))}</option>`).join('')}</select></td><td class="note">${lk.map[k]!=null?esc(String(lk.rows[0]?.[lk.map[k]]??'')):''}</td></tr>`).join('')}
+    </tbody></table><p class="note">Bedragen: gebruik de kolommen <b>exclusief btw</b> (de rekenkern rekent excl.); incl-kolommen worden standaard genegeerd.</p></div>
+    <div class="card"><b>Koppeltabel (eerste 8 rijen)</b><div class="tablewrap" style="margin-top:8px"><table><thead><tr>${lk.headers.map((h,i)=>`<th>${esc(h||('kolom '+(i+1)))}</th>`).join('')}</tr></thead><tbody>${lk.rows.slice(0,8).map(r=>`<tr>${lk.headers.map((_,i)=>`<td>${esc(r[i]??'')}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div></div>`;
+  $('#lkKey').onchange = e => { lk.key = e.target.value; renderLookup(el); }; $('#lkKeyCol').onchange = e => { if (e.target.value==='') delete lk.map._key; else lk.map._key = +e.target.value; renderLookup(el); };
+  $$('[data-lkmap]').forEach(s => s.onchange = () => { if (s.value==='') delete lk.map[s.dataset.lkmap]; else lk.map[s.dataset.lkmap] = +s.value; renderLookup(el); });
+  $('#lkOv').onchange = e => lk.overschrijf = e.target.checked; $('#lkGo').onclick = applyLookup; $('#lkCancel').onclick = () => { lk = null; render(); };
 }
 window.STEMI_UI = window.STEMI_UI || {}; window.STEMI_UI.renderInspectie = render;
 })();

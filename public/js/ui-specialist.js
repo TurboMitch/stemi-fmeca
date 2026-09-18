@@ -25,7 +25,7 @@ ${K.S.map(s=>`  ${s.score} ${s.generiek}: ${ASP.map((a,i)=>`${a}: ${s.aspecten[i
 ${K.beoordelingsregels || ''}
 - Maatregel: concreet en uitvoerbaar; benoem integraal (hele element) of lokaal (alleen gebrek) en waarom.
 - Restrisico S/O/D: scores ná uitvoering van de maatregel.
-- Kosten: beoordeel het eerste kostenvoorstel (hoeveelheid × kengetal) op realisme (bereikbaarheid, steigers, voorbereiding, veiligheidsmaatregelen, onderzoek). Geef alleen een overschrijving als je die kunt onderbouwen; anders null.
+- Kosten: als er een koppeltabel met kengetallen vervangen/herstellen/reinigen is, controleer of het gekozen kengetal past bij de maatregel die jij voorstelt (herstellen vs vervangen vs reinigen); zo niet: kies het andere kengetal × hoeveelheid als kostenSpecialist en leg dat uit. Beoordeel het eerste kostenvoorstel (hoeveelheid × kengetal) op realisme (bereikbaarheid, steigers, voorbereiding, veiligheidsmaatregelen, onderzoek). Geef alleen een overschrijving als je die kunt onderbouwen; anders null.
 - Verificatie: als er al waarden van een specialist of uit Excel staan, controleer die expliciet: bevestig of wijk af, met reden.
 - Data uit onderhoudssoftware: als 'risicoaspectenInspecteurNEN2767' aanwezig is (veiligheid/gebruik/beleving/vervolgschade/klachten met Matig/Sterk), gebruik dat als hint voor de effectscores en benoem het in de onderbouwing. Als de bibliotheekkoppeling onzeker is (zekerheid middel/laag) of ontbreekt, beoordeel zelf welke kandidaat past of geef aan dat geen kandidaat past; noem de gekozen code in gebruikteBronnen. Ontbrekende inspectievelden (ontwikkelingsklasse, inspecteerbaarheid) vul je in op basis van gebreksoort, intensiteit, ernst en ervaring, met lager vertrouwen.
 ${C.cfg.context ? '\nORGANISATIECONTEXT\n' + C.cfg.context : ''}
@@ -44,7 +44,7 @@ function rowContext(r) {
     systeemvoorstel: { O: r.oSys, Oklasse: r.oInfo.klasse, Ouitleg: r.oInfo.uitleg, OontbrekendeInput: r.oInfo.ontbreekt, D: r.dSys, Dtekst: r.dSys ? C.voorstelDtekst(i.inspecteerbaarheid) : null, Tklasse: r.tKlSys, Tjaar: r.tJaarSys, opmerkingT: r.tTxtSys },
     huidigeWaarden: Object.fromEntries(AI_FIELDS.map(([k]) => [k, r.sp[k]]).filter(([,v]) => v != null && v !== '' && !(Array.isArray(v) && !v.length))),
     herkomstHuidigeWaarden: Object.fromEntries(Object.entries(r.sp.prov||{}).map(([k,p])=>[k,p.bron])),
-    kosten: { standaardMaatregelSoftware: i.maatregel, kengetalPerEenheid: i.kengetal, kostenVolledigElement: r.kostenElement, kostenLokaalGebrek: r.kostenLokaal, eersteKostenvoorstel: r.eersteVoorstel, automatischeBegrotingswijze: r.begrotingswijze, omslagpercentage: r.omslagEff },
+    kosten: { standaardMaatregelSoftware: i.maatregel, kengetalPerEenheid: i.kengetal, kengetalBron: i.kengetalBron, kengetallenKoppeltabel: i.kengetallen ? { vervangen: i.kengetallen.vervangen, herstellen: i.kengetallen.herstellen, reinigen: i.kengetallen.reinigen, gekozen: i.kengetallen.keuze } : null, cyclusJaar: i.cyclus, levensduurJaar: i.levensduur, kostenVolledigElement: r.kostenElement, kostenLokaalGebrek: r.kostenLokaal, eersteKostenvoorstel: r.eersteVoorstel, automatischeBegrotingswijze: r.begrotingswijze, omslagpercentage: r.omslagEff },
     resultaatHuidig: { RPNtech: r.RPNtech, RPNwaarde: r.RPNwaarde, prioriteit: r.prio } };
 }
 const rowStatus = {}; // id -> {state:'bezig'|'ok'|'fout', msg, t0}
