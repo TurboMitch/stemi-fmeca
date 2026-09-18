@@ -27,6 +27,7 @@ ${K.beoordelingsregels || ''}
 - Restrisico S/O/D: scores ná uitvoering van de maatregel.
 - Kosten: beoordeel het eerste kostenvoorstel (hoeveelheid × kengetal) op realisme (bereikbaarheid, steigers, voorbereiding, veiligheidsmaatregelen, onderzoek). Geef alleen een overschrijving als je die kunt onderbouwen; anders null.
 - Verificatie: als er al waarden van een specialist of uit Excel staan, controleer die expliciet: bevestig of wijk af, met reden.
+- Data uit onderhoudssoftware: als 'risicoaspectenInspecteurNEN2767' aanwezig is (veiligheid/gebruik/beleving/vervolgschade/klachten met Matig/Sterk), gebruik dat als hint voor de effectscores en benoem het in de onderbouwing. Als de bibliotheekkoppeling onzeker is (zekerheid middel/laag) of ontbreekt, beoordeel zelf welke kandidaat past of geef aan dat geen kandidaat past; noem de gekozen code in gebruikteBronnen. Ontbrekende inspectievelden (ontwikkelingsklasse, inspecteerbaarheid) vul je in op basis van gebreksoort, intensiteit, ernst en ervaring, met lager vertrouwen.
 ${C.cfg.context ? '\nORGANISATIECONTEXT\n' + C.cfg.context : ''}
 
 Houd onderbouwingen compact (1–3 zinnen per veld); geen inleiding of tekst buiten de JSON.
@@ -39,7 +40,7 @@ function rowContext(r) {
     hoeveelheidTotaal: i.hoevTotaal, eenheid: i.eenheid, hoeveelheidMetGebrek: i.hoevGebrek, omvangGebrek: pct(r.omvang), nenConditie: i.conditie, ontwikkeling: i.ontwikkeling,
     inspecteerbaarheid: i.inspecteerbaarheid, bewijs: i.bewijs, aanvullendOnderzoekNodig: i.onderzoek, toelichtingInspecteur: i.toelichting,
     nenCode: i.nenCode, bibliotheek: r.libE ? { bouwdeel: r.libE.bouwdeel, classificatie: r.libE.ernst, gebreksoort: r.libE.gebreksoort, omschrijving: r.libE.omschrijving, faalwijzeVoorstel: r.libE.faalwijze, effectVoorstel: r.libE.effect, vertrouwen: r.libE.vertrouwen } : null,
-    ontwikkelingKlasse: i.ontwikkelingKlasse,
+    ontwikkelingKlasse: i.ontwikkelingKlasse, bouwdeel: i.bouwdeel, gebreksoort: i.gebreksoort, nenGebrekcodePrefix: i.gebrekPrefix, risicoaspectenInspecteurNEN2767: i.risico || null, bibliotheekKoppeling: i.nenMatch ? { zekerheid: i.nenMatch.zeker, score: i.nenMatch.score, kandidaten: i.nenMatch.kandidaten } : null, extraKolommenExport: i.extra || null,
     systeemvoorstel: { O: r.oSys, Oklasse: r.oInfo.klasse, Ouitleg: r.oInfo.uitleg, OontbrekendeInput: r.oInfo.ontbreekt, D: r.dSys, Dtekst: r.dSys ? C.voorstelDtekst(i.inspecteerbaarheid) : null, Tklasse: r.tKlSys, Tjaar: r.tJaarSys, opmerkingT: r.tTxtSys },
     huidigeWaarden: Object.fromEntries(AI_FIELDS.map(([k]) => [k, r.sp[k]]).filter(([,v]) => v != null && v !== '' && !(Array.isArray(v) && !v.length))),
     herkomstHuidigeWaarden: Object.fromEntries(Object.entries(r.sp.prov||{}).map(([k,p])=>[k,p.bron])),
