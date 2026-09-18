@@ -15,7 +15,11 @@ async function login(username, password) {
   user = data.user; await loadProfile(); return user;
 }
 async function logout() { await sb.auth.signOut(); user = null; profile = null; dossier = null; location.reload(); }
-async function token() { const { data } = await sb.auth.getSession(); return data.session?.access_token; }
+async function token() {
+  let { data } = await sb.auth.getSession(); let s = data.session; if (!s) return null;
+  if ((s.expires_at || 0) * 1000 - Date.now() < 5 * 60 * 1000) { const r = await sb.auth.refreshSession(); if (r.data.session) s = r.data.session; }
+  return s.access_token;
+}
 
 // ---------- dossiers ----------
 async function listDossiers() { const { data, error } = await sb.from('dossiers').select('id,naam,versie,updated_at,updated_by').order('updated_at', { ascending: false }); if (error) throw error; return data; }
@@ -40,7 +44,7 @@ function setStatus(t, warn=false) { const el = $('#dbStatus'); if (el) { el.text
 
 // ---------- audit & AI-runs ----------
 async function logAudit(entry) { if (!dossier || !user) return; try { await sb.from('audit_log').insert({ dossier_id: dossier.id, user_id: user.id, username: profile?.username, ts: entry.ts, regel: entry.regel ?? null, veld: entry.veld ?? null, oud: entry.oud === undefined ? null : entry.oud, nieuw: entry.nieuw === undefined ? null : entry.nieuw, bron: entry.bron ?? null, model: entry.model ?? null, opmerking: entry.opmerking ?? null }); } catch (e) { console.warn('audit', e); } }
-async function logAiRun(run) { if (!dossier || !user) return; try { await sb.from('ai_runs').insert({ dossier_id: dossier.id, user_id: user.id, regel: run.regel ?? null, taak: run.taak || 'specialist', model: run.model, input: run.input, output: run.output, usage: run.usage }); } catch (e) { console.warn('ai_run', e); } }
+async function logAiRun(run) { if (!dossier || !user) return; try { const { error } = await sb.from('ai_runs').insert({ dossier_id: dossier.id, user_id: user.id, regel: run.regel ?? null, taak: run.taak || 'specialist', model: run.model || null, input: run.input ?? null, output: run.output ?? null, usage: run.usage ?? null }); if (error) console.warn('ai_run', error); } catch (e) { console.warn('ai_run', e); } }
 async function auditFromDb(limit=500) { const { data } = await sb.from('audit_log').select('*').eq('dossier_id', dossier.id).order('ts', { ascending: false }).limit(limit); return data || []; }
 
 // ---------- gedeelde instellingen (OpenRouter-sleutel, modellen, context) ----------

@@ -175,8 +175,14 @@ function recompute() {
 function modelFor(taak) { return (cfg.models && cfg.models[taak]) || cfg.model; }
 async function callAgent(messages, json=true, opts={}) {
   const tok = window.STEMI_DB ? await window.STEMI_DB.token() : null;
-  const r = await fetch('/api/analyze', { method:'POST', headers:{'Content-Type':'application/json', ...(cfg.apiKey?{'x-openrouter-key':cfg.apiKey}:{}), ...(tok?{'Authorization':'Bearer '+tok}:{})}, body: JSON.stringify({ model: opts.model||modelFor(opts.taak||'specialist'), messages, json, max_tokens: opts.max_tokens||4000 }) });
-  const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Fout ' + r.status); return d;
+  const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), opts.timeoutMs || 240000);
+  let r, d;
+  try {
+    r = await fetch('/api/analyze', { method:'POST', signal: ctrl.signal, headers:{'Content-Type':'application/json', ...(cfg.apiKey?{'x-openrouter-key':cfg.apiKey}:{}), ...(tok?{'Authorization':'Bearer '+tok}:{})}, body: JSON.stringify({ model: opts.model||modelFor(opts.taak||'specialist'), messages, json, max_tokens: opts.max_tokens||4000 }) });
+    const txt = await r.text(); try { d = JSON.parse(txt); } catch { d = { error: (r.status===504?'Time-out op de server (model te traag)':'Onverwacht antwoord '+r.status) + ': ' + txt.slice(0,200) }; }
+  } catch (e) { throw new Error(e.name === 'AbortError' ? 'Time-out: het model antwoordde niet binnen 4 minuten' : 'Netwerkfout: ' + e.message); }
+  finally { clearTimeout(t); }
+  if (!r.ok) throw new Error(d.error || 'Fout ' + r.status); return d;
 }
 function parseJSON(text) { try { return JSON.parse(text); } catch {} const m = String(text).match(/\{[\s\S]*\}/); if (m) { try { return JSON.parse(m[0]); } catch {} } throw new Error('Agent gaf geen geldige JSON terug'); }
 

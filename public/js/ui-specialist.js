@@ -42,13 +42,25 @@ function rowContext(r) {
     kosten: { standaardMaatregelSoftware: i.maatregel, kengetalPerEenheid: i.kengetal, kostenVolledigElement: r.kostenElement, kostenLokaalGebrek: r.kostenLokaal, eersteKostenvoorstel: r.eersteVoorstel, automatischeBegrotingswijze: r.begrotingswijze, omslagpercentage: r.omslagEff },
     resultaatHuidig: { RPNtech: r.RPNtech, RPNwaarde: r.RPNwaarde, prioriteit: r.prio } };
 }
+const rowStatus = {}; // id -> {state:'bezig'|'ok'|'fout', msg, t0}
+function setRowStatus(id, state, msg='') { rowStatus[id] = { state, msg, t0: state==='bezig' ? Date.now() : (rowStatus[id]?.t0) }; const el = $(`[data-rowstatus="${id}"]`); if (el) el.innerHTML = statusHtml(id); }
+function statusHtml(id) { const st = rowStatus[id]; if (!st) return ''; if (st.state==='bezig') return `<span class="spin"></span><span class="note">agent bezig… ${Math.round((Date.now()-st.t0)/1000)}s</span>`; if (st.state==='fout') return `<span class="warn" title="${esc(st.msg)}">Fout: ${esc(st.msg.slice(0,90))}</span>`; return `<span class="tag">klaar in ${Math.round((Date.now()-st.t0)/1000)}s</span>`; }
+setInterval(() => { for (const id in rowStatus) if (rowStatus[id].state==='bezig') { const el = $(`[data-rowstatus="${id}"]`); if (el) el.innerHTML = statusHtml(+id); } }, 1000);
 async function analyzeRow(id, extra='') {
-  const r = C.calc.rows.find(x=>x.id===id);
-  const msgs = [{role:'system',content:systemPrompt()},{role:'user',content:`Interpreteer deze FMECA-regel en vul tabblad 03 volledig in.${extra?'\nExtra instructie: '+extra:''}\n\n${JSON.stringify(rowContext(r),null,1)}`}];
-  const ctx = rowContext(r); const d = await C.callAgent(msgs, true, {taak:'specialist'}); const p = C.parseJSON(d.content);
-  C.state.ai[id] = { ...p, _model: d.model, _ts: new Date().toISOString(), _usage: d.usage, _input: ctx }; C.save();
-  if (window.STEMI_DB) window.STEMI_DB.logAiRun({ regel:id, taak:'specialist', model:d.model, input:{ system: msgs[0].content, context: ctx, extra }, output:p, usage:d.usage });
-  return p;
+  const r = C.calc.rows.find(x=>x.id===id); const ctx = rowContext(r);
+  const msgs = [{role:'system',content:systemPrompt()},{role:'user',content:`Interpreteer deze FMECA-regel en vul tabblad 03 volledig in.${extra?'\nExtra instructie: '+extra:''}\n\n${JSON.stringify(ctx,null,1)}`}];
+  setRowStatus(id, 'bezig');
+  try {
+    const d = await C.callAgent(msgs, true, {taak:'specialist'});
+    let p; try { p = C.parseJSON(d.content); } catch (e) { throw new Error('Geen geldige JSON van het model (' + (d.finish_reason||'?') + '): ' + String(d.content).slice(0,120)); }
+    C.state.ai[id] = { ...p, _model: d.model, _ts: new Date().toISOString(), _usage: d.usage, _input: ctx }; C.save();
+    if (window.STEMI_DB) window.STEMI_DB.logAiRun({ regel:id, taak:'specialist', model:d.model, input:{ system: msgs[0].content, context: ctx, extra }, output:p, usage:d.usage });
+    setRowStatus(id, 'ok'); return p;
+  } catch (e) {
+    setRowStatus(id, 'fout', e.message);
+    if (window.STEMI_DB) window.STEMI_DB.logAiRun({ regel:id, taak:'specialist', model:C.modelFor('specialist'), input:{ context: ctx, extra }, output:{ error: e.message } });
+    throw e;
+  }
 }
 /** past AI-voorstel toe; menselijke velden blijven staan tenzij overschrijf=true */
 function applyAI(id, keys, overschrijf=false) {
@@ -59,19 +71,22 @@ function applyAI(id, keys, overschrijf=false) {
   C.save(); return n;
 }
 async function aiFillAll(opts={}) {
-  if (!C.cfg.apiKey) { window.STEMI_UI.switchTab('instellingen'); C.toast('Vul eerst een OpenRouter-sleutel in'); return; }
+  if (!C.cfg.apiKey) { window.STEMI_UI.switchTab('instellingen'); C.toast('Vul eerst een OpenRouter-sleutel in en klik Opslaan'); return; }
   const rows = C.calc.rows.filter(r => opts.alleenNieuw ? !C.state.ai[r.id] : true); if (!rows.length) { C.toast('Niets te doen'); return; }
-  const btn = $('#aiAll'); let n=0, fails=0; if (btn) btn.disabled = true;
-  for (const r of rows) { if (btn) btn.innerHTML = `<span class="spin"></span>${++n}/${rows.length} – regel ${r.id}`; try { await analyzeRow(r.id); applyAI(r.id, AI_FIELDS.map(f=>f[0]), !!opts.overschrijf); C.recompute(); } catch(e) { fails++; C.audit({regel:r.id, veld:'ai', nieuw:'mislukt: '+e.message, bron:'ai'}); } }
-  C.save(); window.STEMI_UI.renderAll('specialist'); C.toast(`AI heeft ${rows.length-fails} regel(s) ingevuld${fails?`, ${fails} mislukt`:''}`);
+  const btn = $('#aiAll'); let done=0, fails=0; if (btn) btn.disabled = true;
+  const upd = () => { if (btn) btn.innerHTML = `<span class="spin"></span>${done}/${rows.length} klaar${fails?` · ${fails} fout`:''} – model ${esc(C.modelFor('specialist'))}`; };
+  upd();
+  const queue = rows.slice(); const CONC = 3;
+  const worker = async () => { while (queue.length) { const r = queue.shift(); try { await analyzeRow(r.id); applyAI(r.id, AI_FIELDS.map(f=>f[0]), !!opts.overschrijf); C.recompute(); } catch(e) { fails++; C.audit({regel:r.id, veld:'ai', nieuw:'mislukt: '+e.message, bron:'ai'}); } done++; upd(); } };
+  try { await Promise.all(Array.from({length: Math.min(CONC, rows.length)}, worker)); }
+  finally { C.save(); window.STEMI_UI.renderAll('specialist'); C.toast(fails ? `${rows.length-fails} regel(s) ingevuld, ${fails} mislukt – zie de kolom Status` : `AI heeft ${rows.length} regel(s) ingevuld`, 6000); }
 }
-
 function provBadge(sp, k) { const p = (sp.prov||{})[k]; if (!p) return '<span class="prov sys" title="systeemvoorstel (leeg veld)">sys</span>'; const b = BRON[p.bron]||[p.bron,p.bron]; return `<span class="prov ${b[1]}" title="${esc(p.bron)} · ${new Date(p.ts).toLocaleString('nl-NL')}${p.model?' · '+esc(p.model):''}">${b[0]}</span>`; }
 
 function render() {
   const el = $('#tab-specialist'); const R = C.calc.rows; const nAI = R.filter(r=>C.state.ai[r.id]).length; const nMens = R.filter(r=>Object.values(r.sp.prov||{}).some(p=>p.bron==='mens')).length;
   el.innerHTML = `
-    <h2>03 Technisch specialist / ME <span class="ai-badge">AI-laag</span></h2><p class="sub">De AI vult op basis van tab 02 en de gebrekenbibliotheek álle velden in, verifieert bestaande waarden en overschrijft waar nodig – altijd met onderbouwing. De specialist controleert en corrigeert; elke waarde heeft een herkomst. <span class="prov sys">sys</span> systeemvoorstel · <span class="prov ai">AI</span> · <span class="prov mens">Mens</span> · <span class="prov xl">Excel</span></p>
+    <h2>03 Technisch specialist / ME <span class="ai-badge">AI-laag</span></h2><p class="sub">De AI vult op basis van tab 02 en de gebrekenbibliotheek álle velden in, verifieert bestaande waarden en overschrijft waar nodig – altijd met onderbouwing. De specialist controleert en corrigeert; elke waarde heeft een herkomst. <span class="prov inl sys">sys</span> systeemvoorstel · <span class="prov inl ai">AI</span> · <span class="prov inl mens">Mens</span> · <span class="prov inl xl">Excel</span></p>
     <div class="toolbar">
       <button class="btn" id="aiAll">${C.cfg.apiKey?'':'🔒 '}AI: alle regels invullen &amp; verifiëren</button>
       <button class="btn ghost" id="aiNew">Alleen nieuwe regels</button>
@@ -97,7 +112,7 @@ function render() {
       <td class="oranje">${P('kostenSpecialist')}<input class="n" style="width:80px" data-sp="${id}" data-k="kostenSpecialist" value="${esc(sp.kostenSpecialist??'')}" placeholder="${r.eersteVoorstel??''}"></td>
       <td class="oranje"><textarea data-sp="${id}" data-k="onderbouwingKosten">${esc(sp.onderbouwingKosten||'')}</textarea></td>
       <td class="oranje"><select data-sp="${id}" data-k="scopeOverride"><option value="">(${esc(r.begrotingswijze||'–')})</option><option ${sp.scopeOverride==='Integraal uitvoeren'?'selected':''}>Integraal uitvoeren</option><option ${sp.scopeOverride==='Lokaal uitvoeren'?'selected':''}>Lokaal uitvoeren</option></select></td>
-      <td><span class="tag">${esc(r.aiStatus)}</span>${ai?`<div class="note">vertrouwen ${esc(ai.vertrouwen||'?')}</div>`:''}</td>
+      <td><span class="tag">${esc(r.aiStatus)}</span>${ai?`<div class="note">vertrouwen ${esc(ai.vertrouwen||'?')}</div>`:''}<div data-rowstatus="${id}">${statusHtml(id)}</div></td>
       <td><button class="btn small" data-ai="${id}">${ai?'Verantwoording':'AI invullen'}</button></td></tr>`; }).join('')}
     </tbody></table></div>`;
   $$('[data-sp]').forEach(i => i.onchange = () => { const id=+i.dataset.sp, k=i.dataset.k; C.setSp(id, k, i.value, 'mens'); const sp=C.getSp(id); if (k==='Tklasse' && i.value && sp.Tjaar == null) C.setSp(id,'Tjaar',C.tJaarVanKlasse(i.value),'systeem'); C.save(); window.STEMI_UI.renderAll('specialist'); });
