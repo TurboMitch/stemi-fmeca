@@ -122,3 +122,6 @@ tr.sub td{border-top:0}
 .infopop h4{margin:8px 0 4px;font-size:12px}
 .infopop table.diff td{padding:2px 4px;vertical-align:top}
 .infopop .toolbar{margin-top:6px}
+.infopop ol.lineage{margin:0 0 6px;padding-left:18px}
+.infopop ol.lineage li{margin:3px 0;padding-left:2px}
+.infopop ol.lineage li::marker{color:var(--accent);font-weight:700}
