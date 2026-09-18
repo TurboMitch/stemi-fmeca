@@ -108,3 +108,17 @@ tr.sub td{border-top:0}
 #hdrDossier,#hdrUser{display:inline-flex;align-items:center;gap:6px}
 
 .prov.inl{display:inline-block;width:auto}
+
+/* herkomst-icoon per veld (tab 03) */
+.provrow{display:flex;align-items:center;gap:4px;margin-bottom:2px;min-height:14px}
+.provrow .prov{margin-bottom:0}
+.info{width:15px;height:15px;border-radius:50%;border:1px solid var(--accent);background:#fff;color:var(--accent);font:700 10px/13px Georgia,serif;cursor:pointer;padding:0;flex:none;opacity:.75}
+.info:hover{opacity:1;background:var(--accent);color:#fff}
+.infopop{position:fixed;z-index:60;width:420px;max-width:calc(100vw - 16px);max-height:70vh;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.18);padding:10px 12px;font-size:12px}
+.infopop .infohead{display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:13px}
+.infopop .x{border:0;background:none;font-size:16px;cursor:pointer;color:var(--muted);padding:0 2px}
+.infopop dl{margin:0;display:grid;grid-template-columns:110px 1fr;gap:3px 8px}
+.infopop dt{color:var(--muted)}.infopop dd{margin:0;word-break:break-word}
+.infopop h4{margin:8px 0 4px;font-size:12px}
+.infopop table.diff td{padding:2px 4px;vertical-align:top}
+.infopop .toolbar{margin-top:6px}
