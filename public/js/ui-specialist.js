@@ -27,6 +27,7 @@ ${K.beoordelingsregels || ''}
 - Verificatie: als er al waarden van een specialist of uit Excel staan, controleer die expliciet: bevestig of wijk af, met reden.
 ${C.cfg.context ? '\nORGANISATIECONTEXT\n' + C.cfg.context : ''}
 
+Houd onderbouwingen compact (1–3 zinnen per veld); geen inleiding of tekst buiten de JSON.
 ANTWOORD ALTIJD MET ÉÉN JSON-OBJECT met exact deze sleutels:
 {"faalwijze": string, "O": int 1-10, "onderbouwingO": string, "D": int 1-10, "onderbouwingD": string, "Tklasse": één van ${JSON.stringify(R.tKlassen.map(t=>t.klasse))}, "Tjaar": number, "onderbouwingT": string, "effect": [8 ints 0-10 in volgorde ${ASP.join(', ')}], "onderbouwingEffect": string (kort per aspect dat >0 scoort, met verwijzing naar de schaaldefinitie), "maatregel": string, "restS": int, "restO": int, "restD": int, "restToelichting": string, "kostenSpecialist": number|null, "onderbouwingKosten": string, "scopeOverride": "Integraal uitvoeren"|"Lokaal uitvoeren"|null, "onderbouwingScope": string, "aanvullendOnderzoek": string, "verificatie": [{"veld": string, "huidig": any, "oordeel": "bevestigd"|"aangepast"|"n.v.t.", "reden": string}], "gebruikteBronnen": [strings: welke inspectievelden/bibliotheekvelden doorslaggevend waren], "onzekerheden": [strings], "vertrouwen": "Laag"|"Middel"|"Hoog"}`;
 }
@@ -51,8 +52,11 @@ async function analyzeRow(id, extra='') {
   const msgs = [{role:'system',content:systemPrompt()},{role:'user',content:`Interpreteer deze FMECA-regel en vul tabblad 03 volledig in.${extra?'\nExtra instructie: '+extra:''}\n\n${JSON.stringify(ctx,null,1)}`}];
   setRowStatus(id, 'bezig');
   try {
-    const d = await C.callAgent(msgs, true, {taak:'specialist'});
-    let p; try { p = C.parseJSON(d.content); } catch (e) { throw new Error('Geen geldige JSON van het model (' + (d.finish_reason||'?') + '): ' + String(d.content).slice(0,120)); }
+    let d = await C.callAgent(msgs, true, {taak:'specialist'});
+    let p; try { p = C.parseJSON(d.content); } catch (e) {
+      if (d.finish_reason === 'length') { setRowStatus(id, 'bezig'); d = await C.callAgent(msgs, true, {taak:'specialist', max_tokens: 32000}); try { p = C.parseJSON(d.content); } catch (e2) { throw new Error('Antwoord afgekapt (finish_reason length), ook na herhaling met meer tokens'); } }
+      else throw new Error('Geen geldige JSON van het model (' + (d.finish_reason||'?') + '): ' + String(d.content).slice(0,120));
+    }
     C.state.ai[id] = { ...p, _model: d.model, _ts: new Date().toISOString(), _usage: d.usage, _input: ctx }; C.save();
     if (window.STEMI_DB) window.STEMI_DB.logAiRun({ regel:id, taak:'specialist', model:d.model, input:{ system: msgs[0].content, context: ctx, extra }, output:p, usage:d.usage });
     setRowStatus(id, 'ok'); return p;
