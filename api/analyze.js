@@ -9,9 +9,10 @@ export default async function handler(req, res) {
 
   let body = req.body;
   if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
-  const { model = 'anthropic/claude-sonnet-4.5', messages = [], json = true, temperature = 0.2, max_tokens = 4000 } = body || {};
+  const { model = 'anthropic/claude-sonnet-4.5', messages = [], json = true, temperature = 0.2, max_tokens = 16000, reasoning } = body || {};
 
   const payload = { model, messages, temperature, max_tokens };
+  if (reasoning) payload.reasoning = reasoning;
   if (json) payload.response_format = { type: 'json_object' };
 
   const host = req.headers['x-forwarded-host'] || req.headers.host || 'stemi-fmeca.vercel.app';
