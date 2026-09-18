@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STEMI FMECA · MJOP</title>
+<link rel="stylesheet" href="/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="/config.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="dot"></span><b>STEMI</b> Waardegestuurd FMECA → MJOP</div>
+  <nav class="tabs" id="tabs">
+    <button data-tab="overzicht" class="active">Overzicht</button>
+    <button data-tab="eigenaar">01 AM-wizard</button>
+    <button data-tab="inspectie">02 Inspectie</button>
+    <button data-tab="specialist">03 Specialist <span class="ai-badge">AI</span></button>
+    <button data-tab="systeem">04 Systeemmodel</button>
+    <button data-tab="mjop">05 MJOP</button>
+    <button data-tab="instellingen">Instellingen</button>
+    <button data-tab="uitleg">Uitleg</button>
+  </nav>
+  <div class="actions">
+    <span id="hdrDossier"></span>
+    <button class="btn ghost" id="btnExport">Excel exporteren</button>
+    <button class="btn ghost" id="btnReset" title="Terug naar voorbeelddata">Reset</button>
+    <span id="hdrUser"></span>
+  </div>
+</header>
+<main id="main">
+  <section id="tab-overzicht" class="tab active"></section>
+  <section id="tab-eigenaar" class="tab"></section>
+  <section id="tab-inspectie" class="tab"></section>
+  <section id="tab-specialist" class="tab"></section>
+  <section id="tab-systeem" class="tab"></section>
+  <section id="tab-mjop" class="tab"></section>
+  <section id="tab-instellingen" class="tab"></section>
+  <section id="tab-uitleg" class="tab"></section>
+</main>
+<aside id="drawer" class="drawer hidden">
+  <div class="drawer-head"><b id="drawerTitle">AI-voorstel</b><button class="btn ghost small" id="drawerClose">Sluiten</button></div>
+  <div id="drawerBody" class="drawer-body"></div>
+</aside>
+<div id="toast" class="toast hidden"></div>
+<div id="login" class="login hidden">
+  <form id="loginForm" class="card login-card">
+    <div class="brand" style="margin-bottom:14px"><span class="dot"></span><b>STEMI</b> Waardegestuurd FMECA → MJOP</div>
+    <div class="field"><label>Gebruikersnaam</label><input id="loginUser" autocomplete="username" required></div>
+    <div class="field"><label>Wachtwoord</label><input id="loginPass" type="password" autocomplete="current-password" required></div>
+    <button class="btn" type="submit" style="width:100%">Inloggen</button>
+    <p id="loginStatus" class="note" style="margin:10px 0 0"></p>
+  </form>
+</div>
+<script src="/js/core.js"></script>
+<script src="/js/db.js"></script>
+<script src="/js/ui-wizard.js"></script>
+<script src="/js/ui-inspectie.js"></script>
+<script src="/js/ui-specialist.js"></script>
+<script src="/js/ui-mjop.js"></script>
+<script src="/js/ui-rest.js"></script>
+<script src="/js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "name": "stemi-fmeca",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Waardegestuurd FMECA -> MJOP dashboard met AI-laag (OpenRouter) en Supabase",
+  "engines": { "node": "24.x" }
+}
