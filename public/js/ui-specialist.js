@@ -7,15 +7,17 @@ const BRON = { systeem:['Systeem','sys'], excel:['Excel','xl'], ai:['AI','ai'], 
 const tklassen = () => C.state.settings.rules.tKlassen.map(t=>t.klasse);
 
 function systemPrompt() {
-  const S = C.state.settings, K = S.scorekaarten, R = S.rules;
+  const S = C.state.settings, K = S.scorekaarten, R = S.rules, OV = R.oVoorstel;
   return `Je bent een ervaren technisch specialist / maintenance engineer (FMECA, NEN 2767, NEN 8026) die tabblad 03 van een waardegestuurd FMECA-MJOP-model voor bestaand vastgoed invult. Je werkt in het Nederlands, nuchter, en ALLES wat je invult is onderbouwd en herleidbaar naar de inspectiedata, de gebrekenbibliotheek en de scorekaarten. Waar de data onvoldoende is, zeg je dat expliciet en houd je het systeemvoorstel aan met lager vertrouwen.
 
 METHODIEK (organisatie-eigen beleid, instellingenprofiel "${S.naam}")
-- O (occurrence) = kans dat de faalwijze optreedt binnen de O-referentieperiode van ${S.params.oRef} jaar. Schaal 1–10:
-${K.O.map(o=>`  ${o.score}: ${o.kans} – ${o.betekenis}`).join('\n')}
-  Het systeem geeft een startvoorstel O uit intensiteit/omvang/conditie. NEN 2767-conditie wordt NOOIT rechtstreeks naar O geconverteerd; jij beoordeelt ontwikkeling, belasting en gebruikscontext.
-- D (detectability) = mate waarin aankomend functieverlies tijdig detecteerbaar is; hoger = slechter. Schaal 1–10:
-${K.D.map(d=>`  ${d.score}: ${d.detect} – ${d.criterium}`).join('\n')}
+- O (occurrence), referentieperiode ${S.params.oRef} jaar. ${K.Odefinitie || ''}
+  O-scorekaart (organisatie-eigen scorecriteria):
+${K.O.map(o=>`  ${o.score} ${o.classificatie||o.kans||''}: ${o.omschrijving||o.betekenis||''}`).join('\n')}
+  O-systeemvoorstel = MIN(10; basis ${OV.basis} + intensiteit [${Object.entries(OV.intensiteit).map(([k,v])=>`${k} +${v}`).join(', ')}] + omvang [${OV.omvang.slice().sort((a,b)=>a.min-b.min).map(x=>`≥${Math.round(x.min*100)}% +${x.add}`).join(', ')}] + ontwikkeling [${Object.entries(OV.ontwikkeling||{}).map(([k,v])=>`${k} +${v}`).join(', ')}]). De NEN-conditiescore wordt NIET naar O geconverteerd. Jij beoordeelt: is het systeemvoorstel technisch aannemelijk voor deze specifieke faalwijze? Zo ja: neem het over. Zo nee: eigen O met motivatie. Een faalwijze die al volledig is opgetreden druk je uit in T = "Reeds aanwezig", niet automatisch in O = 10.
+- D (detectability). ${K.Ddefinitie || ''} Schaal 1–10:
+${K.D.map(d=>`  ${d.score} ${d.detect}: ${d.criterium}`).join('\n')}
+  D-systeemvoorstel uit inspecteerbaarheid: ${Object.entries(R.dVoorstel).map(([k,v])=>`${k} → ${v}`).join(', ')}.
 - T = verwachte tijd tot functieverlies. Klassen: ${R.tKlassen.map(t=>`"${t.klasse}" (≈${t.jaar} jr)`).join('; ')}. Tjaar is een getal in jaren (0 = reeds aanwezig).
 - Effect S per waardeaspect (0–10), ONGEWOGEN: stel dat de faalwijze daadwerkelijk optreedt, hoe groot is dan het gevolg? Vermeng dit niet met kans. Het waardekompas van de eigenaar wordt pas in het systeemmodel toegepast, dus scoor technisch-objectief. Aspecten in vaste volgorde: ${ASP.join(', ')}.
 Schaaldefinities per aspect:
@@ -37,7 +39,8 @@ function rowContext(r) {
     hoeveelheidTotaal: i.hoevTotaal, eenheid: i.eenheid, hoeveelheidMetGebrek: i.hoevGebrek, omvangGebrek: pct(r.omvang), nenConditie: i.conditie, ontwikkeling: i.ontwikkeling,
     inspecteerbaarheid: i.inspecteerbaarheid, bewijs: i.bewijs, aanvullendOnderzoekNodig: i.onderzoek, toelichtingInspecteur: i.toelichting,
     nenCode: i.nenCode, bibliotheek: r.libE ? { bouwdeel: r.libE.bouwdeel, classificatie: r.libE.ernst, gebreksoort: r.libE.gebreksoort, omschrijving: r.libE.omschrijving, faalwijzeVoorstel: r.libE.faalwijze, effectVoorstel: r.libE.effect, vertrouwen: r.libE.vertrouwen } : null,
-    systeemvoorstel: { O: r.oSys, D: r.dSys, Dtekst: r.dSys ? C.voorstelDtekst(i.inspecteerbaarheid) : null, Tklasse: r.tKlSys, Tjaar: r.tJaarSys, opmerkingT: r.tTxtSys },
+    ontwikkelingKlasse: i.ontwikkelingKlasse,
+    systeemvoorstel: { O: r.oSys, Oklasse: r.oInfo.klasse, Ouitleg: r.oInfo.uitleg, OontbrekendeInput: r.oInfo.ontbreekt, D: r.dSys, Dtekst: r.dSys ? C.voorstelDtekst(i.inspecteerbaarheid) : null, Tklasse: r.tKlSys, Tjaar: r.tJaarSys, opmerkingT: r.tTxtSys },
     huidigeWaarden: Object.fromEntries(AI_FIELDS.map(([k]) => [k, r.sp[k]]).filter(([,v]) => v != null && v !== '' && !(Array.isArray(v) && !v.length))),
     herkomstHuidigeWaarden: Object.fromEntries(Object.entries(r.sp.prov||{}).map(([k,p])=>[k,p.bron])),
     kosten: { standaardMaatregelSoftware: i.maatregel, kengetalPerEenheid: i.kengetal, kostenVolledigElement: r.kostenElement, kostenLokaalGebrek: r.kostenLokaal, eersteKostenvoorstel: r.eersteVoorstel, automatischeBegrotingswijze: r.begrotingswijze, omslagpercentage: r.omslagEff },
@@ -104,9 +107,9 @@ function render() {
     ${R.map(r => { const sp = r.sp, id=r.id, ai = C.state.ai[id]; const P = k => provBadge(sp,k); return `<tr>
       <td>${id}</td><td>${esc(r.insp.element)}</td><td class="wrap">${esc(r.insp.constatering)}</td><td class="num">${r.insp.conditie??''}</td>
       <td class="oranje">${P('faalwijze')}<textarea data-sp="${id}" data-k="faalwijze" placeholder="${esc(r.libE?.faalwijze||'')}">${esc(sp.faalwijze||'')}</textarea>${C.cfg.showSys&&r.libE?`<div class="note">sys: ${esc(r.libE.faalwijze)}</div>`:''}</td>
-      <td class="oranje">${P('O')}<input class="n" data-sp="${id}" data-k="O" value="${esc(sp.O??'')}" placeholder="${r.oSys}"><div class="note">${esc(C.OKANS()[(r.O??1)-1]||'')}</div></td>
-      <td class="oranje"><textarea data-sp="${id}" data-k="onderbouwingO">${esc(sp.onderbouwingO||'')}</textarea>${C.cfg.showSys?`<div class="note">sys O=${r.oSys}: intensiteit ${esc(r.insp.intensiteit||'–')}, omvang ${pct(r.omvang)}, conditie ${r.insp.conditie??'–'}</div>`:''}</td>
-      <td class="oranje">${P('D')}<input class="n" data-sp="${id}" data-k="D" value="${esc(sp.D??'')}" placeholder="${r.dSys??''}"><div class="note">${esc(C.DTEKST()[(r.D??1)-1]||'')}</div></td>
+      <td class="oranje">${P('O')}<input class="n" data-sp="${id}" data-k="O" value="${esc(sp.O??'')}" placeholder="${r.oSys}"><div class="note">${esc(C.oKlasse(r.O))}</div></td>
+      <td class="oranje"><textarea data-sp="${id}" data-k="onderbouwingO">${esc(sp.onderbouwingO||'')}</textarea>${C.cfg.showSys?`<div class="note">sys: ${esc(r.oInfo.uitleg)}${r.oInfo.ontbreekt.length?` <span class="warn">(ontbreekt: ${esc(r.oInfo.ontbreekt.join(', '))})</span>`:''}</div>`:''}</td>
+      <td class="oranje">${P('D')}<input class="n" data-sp="${id}" data-k="D" value="${esc(sp.D??'')}" placeholder="${r.dSys??''}"><div class="note">${esc(C.dKlasse(r.D))}</div>${C.cfg.showSys&&r.dSys?`<div class="note">sys: ${esc(C.voorstelDtekst(r.insp.inspecteerbaarheid))}</div>`:''}</td>
       <td class="oranje"><textarea data-sp="${id}" data-k="onderbouwingD">${esc(sp.onderbouwingD||'')}</textarea></td>
       <td class="oranje">${P('Tklasse')}<select data-sp="${id}" data-k="Tklasse"><option value="">(sys: ${esc(r.tKlSys)})</option>${tklassen().map(t=>`<option ${t===(sp.Tklasse||'')?'selected':''}>${t}</option>`).join('')}</select></td>
       <td class="oranje"><input class="n" data-sp="${id}" data-k="Tjaar" value="${esc(sp.Tjaar??'')}" placeholder="${r.tJaarSys??'?'}"></td>

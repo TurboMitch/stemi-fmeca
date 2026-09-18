@@ -25,57 +25,96 @@ function render() {
 }
 
 function renderProfielen(el) {
-  const S = C.state.settings, names = Object.keys(S.profielen);
-  el.innerHTML = `<div class="card"><h3 style="margin-top:0">Profielbibliotheek – NEN 8026 waardekompassen</h3>
-    <p class="note">Organisatie-eigen beleidswaarden per gebouwtype (0 = niet relevant, 5 = randvoorwaardelijk). Geen voorgeschreven NEN-waarden. Kies in stap 3 welk profiel voor dit object geldt.</p>
-    <div class="tablewrap"><table><thead><tr><th>Aspect</th>${names.map(p=>`<th>${esc(p)} <button class="btn ghost small" data-delprof="${esc(p)}" title="verwijderen">✕</button></th>`).join('')}</tr></thead><tbody>
-    ${ASP.map((a,i)=>`<tr><td>${a}</td>${names.map(p=>`<td><input class="n" data-prof="${esc(p)}" data-i="${i}" value="${esc(S.profielen[p][i])}"></td>`).join('')}</tr>`).join('')}
+  const S = C.state.settings, names = Object.keys(S.profielen), K = S.scorekaarten;
+  el.innerHTML = `<div class="card"><h3 style="margin-top:0">Waardeaspecten (organisatie-specifiek)</h3>
+    <p class="note">Standaard de acht aspecten uit NEN 8026; voeg organisatie-eigen aspecten toe of pas namen en omschrijvingen aan. Effectscores, waardekompas en scorekaarten groeien automatisch mee. De gebrekenbibliotheek levert alleen effectvoorstellen voor de acht standaardaspecten; extra aspecten start je op 0.</p>
+    <div class="tablewrap"><table class="mini"><thead><tr><th>#</th><th>Naam</th><th>Kort</th><th class="wrap">Omschrijving / wat valt eronder</th><th>Rol in beslisregels</th><th></th></tr></thead><tbody>
+    ${S.aspecten.map((a,i)=>`<tr><td>${i+1}</td><td><input data-asp="${i}" data-k="naam" value="${esc(a.naam)}"></td><td><input class="n" style="width:70px" data-asp="${i}" data-k="kort" value="${esc(a.kort||'')}"></td><td class="wrap"><input data-asp="${i}" data-k="omschrijving" value="${esc(a.omschrijving||'')}"></td><td>${a.naam===S.rules.safetyAspect?'<span class="tag">safety-override</span>':''}${a.naam===S.rules.complianceAspect?'<span class="tag">compliance-override</span>':''}</td><td><button class="btn ghost small" data-delasp="${i}" title="verwijderen">✕</button></td></tr>`).join('')}
     </tbody></table></div>
-    <div class="toolbar"><input id="newProf" placeholder="Nieuw profiel (bijv. Zorg)"><button class="btn ghost" id="addProf">+ Profiel toevoegen</button></div></div>`;
-  $$('[data-prof]').forEach(i => i.onchange = () => { S.profielen[i.dataset.prof][+i.dataset.i] = Math.min(5,Math.max(0,num(i.value)??0)); C.save(); C.recompute(); });
-  $('#addProf').onclick = () => { const n=$('#newProf').value.trim(); if(!n||S.profielen[n]) return; S.profielen[n]=[5,5,3,3,3,3,3,3]; C.save(); render(); };
+    <div class="toolbar"><input id="newAspNaam" placeholder="Nieuw aspect (bijv. Reputatie, Circulariteit)"><input id="newAspKort" class="n" style="width:80px" placeholder="kort"><input id="newAspOms" placeholder="omschrijving" style="min-width:260px"><button class="btn ghost" id="addAsp">+ Aspect toevoegen</button></div>
+    <div class="grid two" style="margin-top:8px"><div class="field"><label>Aspect dat de safety-override stuurt</label><select data-ruleasp="safetyAspect">${S.aspecten.map(a=>`<option ${a.naam===S.rules.safetyAspect?'selected':''}>${esc(a.naam)}</option>`).join('')}</select></div><div class="field"><label>Aspect dat de compliance-override stuurt</label><select data-ruleasp="complianceAspect">${S.aspecten.map(a=>`<option ${a.naam===S.rules.complianceAspect?'selected':''}>${esc(a.naam)}</option>`).join('')}</select></div></div>
+    </div>
+    <div class="card" style="margin-top:14px"><h3 style="margin-top:0">Profielbibliotheek – NEN 8026 waardekompassen</h3>
+    <p class="note">Organisatie-eigen beleidswaarden per gebouwtype. Geen voorgeschreven NEN-waarden. Kies in stap 3 welk profiel voor dit object geldt.</p>
+    <div class="tablewrap"><table><thead><tr><th>Aspect</th>${names.map(p=>`<th>${esc(p)} <button class="btn ghost small" data-delprof="${esc(p)}" title="verwijderen">✕</button></th>`).join('')}</tr></thead><tbody>
+    ${ASP.map((a,i)=>`<tr><td>${esc(a)}</td>${names.map(p=>`<td><input class="n" data-prof="${esc(p)}" data-i="${i}" value="${esc(S.profielen[p][i])}"></td>`).join('')}</tr>`).join('')}
+    </tbody></table></div>
+    <div class="toolbar"><input id="newProf" placeholder="Nieuw profiel (bijv. Zorg)"><button class="btn ghost" id="addProf">+ Profiel toevoegen</button></div>
+    <h3>Betekenis van de belangscores 0–5 (overschrijfbaar)</h3>
+    <table class="mini"><tbody>${(K.belangSchaal||[]).map((b,i)=>`<tr><td style="width:40px"><b>${b.score}</b></td><td><input data-bs="${i}" value="${esc(b.omschrijving)}"></td></tr>`).join('')}</tbody></table>
+    <p class="note">Waardefactor = belang / 5. Belang 5 is randvoorwaardelijk; de AM kan in stap 3 per object minimumwaarden opleggen.</p></div>`;
+  const rerender = () => { C.save(); C.recompute(); };
+  $$('[data-prof]').forEach(i => i.onchange = () => { S.profielen[i.dataset.prof][+i.dataset.i] = Math.min(5,Math.max(0,num(i.value)??0)); rerender(); });
+  $('#addProf').onclick = () => { const n=$('#newProf').value.trim(); if(!n||S.profielen[n]) return; S.profielen[n]=ASP.map(()=>3); C.save(); render(); };
   $$('[data-delprof]').forEach(b => b.onclick = () => { if(names.length<=1) return; if(!confirm('Profiel verwijderen?')) return; delete S.profielen[b.dataset.delprof]; if(S.params.profiel===b.dataset.delprof) S.params.profiel=Object.keys(S.profielen)[0]; C.save(); render(); });
+  $$('[data-asp]').forEach(i => i.onchange = () => { const a=S.aspecten[+i.dataset.asp]; const k=i.dataset.k; if (k==='naam') { const old=a.naam; if(!i.value.trim()) return; if (S.rules.safetyAspect===old) S.rules.safetyAspect=i.value.trim(); if (S.rules.complianceAspect===old) S.rules.complianceAspect=i.value.trim(); } a[k]=i.value.trim(); C.syncAspects(); C.audit({veld:'aspect.'+k, nieuw:a[k], bron:'mens'}); rerender(); window.STEMI_UI.renderAll(); });
+  $('#addAsp').onclick = () => { const n=$('#newAspNaam').value.trim(); if(!n) return; if (C.addAspect(n, $('#newAspKort').value.trim(), $('#newAspOms').value.trim())) { C.audit({veld:'aspect', nieuw:'toegevoegd: '+n, bron:'mens'}); rerender(); window.STEMI_UI.renderAll(); } else C.toast('Aspect bestaat al'); };
+  $$('[data-delasp]').forEach(b => b.onclick = () => { const i=+b.dataset.delasp; const a=S.aspecten[i]; if(!confirm(`Aspect “${a.naam}” verwijderen? Effectscores voor dit aspect gaan verloren.`)) return; if (C.removeAspect(i)) { C.audit({veld:'aspect', nieuw:'verwijderd: '+a.naam, bron:'mens'}); rerender(); window.STEMI_UI.renderAll(); } });
+  $$('[data-ruleasp]').forEach(sel => sel.onchange = () => { S.rules[sel.dataset.ruleasp] = sel.value; rerender(); window.STEMI_UI.renderAll(); });
+  $$('[data-bs]').forEach(i => i.onchange = () => { K.belangSchaal[+i.dataset.bs].omschrijving = i.value; rerender(); });
 }
 
 function renderScorekaarten(el) {
-  const S = C.state.settings, R = S.rules, K = S.scorekaarten;
+  const S = C.state.settings, R = S.rules, K = S.scorekaarten, OV = R.oVoorstel;
   const thr = (name, list, key, label) => `<div class="card"><b>${label}</b><table class="mini"><thead><tr><th>${key==='max'?'t.e.m.':'vanaf'}</th><th>Prioriteit</th></tr></thead><tbody>${list.map((x,i)=>`<tr><td><input class="n" data-rule="${name}" data-i="${i}" data-k="${key}" value="${x[key]}"></td><td><select data-rule="${name}" data-i="${i}" data-k="prio">${C.PRIOS.map(p=>`<option ${p===x.prio?'selected':''}>${p}</option>`).join('')}</select></td></tr>`).join('')}</tbody></table></div>`;
+  const vb = (() => { const ex = { intensiteit:'Gevorderd', ontwikkelingKlasse:'Progressief' }; const r = C.systeemvoorstelO(ex, 0.35, true); return r.uitleg; })();
   el.innerHTML = `
-    <p class="note">Het beleidsmatige hart van het model. Alles hieronder is organisatie-eigen en wordt opgeslagen in het instellingenprofiel.</p>
-    <div class="grid two">
-      <div class="card"><h3 style="margin-top:0">O-score (kans binnen ${S.params.oRef} jaar)</h3><table class="mini"><thead><tr><th>Score</th><th>Kansband</th><th>Betekenis</th></tr></thead><tbody>${K.O.map((o,i)=>`<tr><td>${o.score}</td><td><input data-sk="O" data-i="${i}" data-k="kans" value="${esc(o.kans)}"></td><td><input data-sk="O" data-i="${i}" data-k="betekenis" value="${esc(o.betekenis)}"></td></tr>`).join('')}</tbody></table></div>
-      <div class="card"><h3 style="margin-top:0">D-score (detecteerbaarheid; hoger = slechter)</h3><table class="mini"><thead><tr><th>Score</th><th>Detecteerbaarheid</th><th>Praktisch criterium</th></tr></thead><tbody>${K.D.map((d,i)=>`<tr><td>${d.score}</td><td><input data-sk="D" data-i="${i}" data-k="detect" value="${esc(d.detect)}"></td><td><input data-sk="D" data-i="${i}" data-k="criterium" value="${esc(d.criterium)}"></td></tr>`).join('')}</tbody></table></div>
+    <p class="note">Het beleidsmatige hart van het model: <b>organisatie-eigen FMECA-scorecriteria</b>. Eén tabel definieert wat een score betekent (de scorekaart), een aparte tabel bepaalt transparant het automatische systeemvoorstel (de bepalingsregels). De technisch specialist blijft verantwoordelijk voor de definitieve beoordeling. Alles hieronder is overschrijfbaar en wordt in het instellingenprofiel bewaard.</p>
+    <div class="card"><h3 style="margin-top:0">O-scorekaart – Occurrence</h3>
+      <div class="field"><label>Definitie</label><textarea data-kdef="Odefinitie" rows="3">${esc(K.Odefinitie||'')}</textarea></div>
+      <table class="mini"><thead><tr><th style="width:60px">O-score</th><th style="width:200px">Classificatie</th><th>Omschrijving / beoordelingscriterium</th></tr></thead><tbody>${K.O.map((o,i)=>`<tr><td><b>${o.score}</b></td><td><input data-sk="O" data-i="${i}" data-k="classificatie" value="${esc(o.classificatie||'')}"></td><td><input data-sk="O" data-i="${i}" data-k="omschrijving" value="${esc(o.omschrijving||'')}"></td></tr>`).join('')}</tbody></table>
+    </div>
+    <div class="grid two" style="margin-top:14px">
+      <div class="card"><h3 style="margin-top:0">O-bepalingsregels (automatisch systeemvoorstel)</h3>
+        <p class="note">O-systeemvoorstel = MIN(10; basis + intensiteit + omvang + ontwikkeling). De NEN-conditiescore telt niet mee (intensiteit en omvang zitten al in de conditiebepaling; anders dubbeltelling).</p>
+        <table class="mini"><thead><tr><th>Parameter inspectie</th><th>Waarde</th><th style="width:90px">Bijdrage O</th></tr></thead><tbody>
+        <tr><td>Basiswaarde</td><td>Relevant gebrek aanwezig</td><td><input class="n" data-ov="basis" value="${OV.basis}"></td></tr>
+        ${C.INTENSITEIT.map((k,i)=>`<tr><td>${i===0?'Intensiteit':''}</td><td>${k}</td><td><input class="n" data-ovi="${esc(k)}" value="${OV.intensiteit[k]??0}"></td></tr>`).join('')}
+        <tr><td>Omvang</td><td>&lt; ${pctOf(OV.omvang,1)}</td><td>+0</td></tr>
+        ${OV.omvang.slice().sort((a,b)=>a.min-b.min).map((o,i)=>`<tr><td></td><td>≥ <input class="n" style="width:60px" data-ovo="${OV.omvang.indexOf(o)}" data-k="min" value="${o.min}"> (fractie)</td><td><input class="n" data-ovo="${OV.omvang.indexOf(o)}" data-k="add" value="${o.add}"></td></tr>`).join('')}
+        ${C.ONTWIKKELING.map((k,i)=>`<tr><td>${i===0?'Ontwikkeling':''}</td><td>${k}</td><td><input class="n" data-ovw="${esc(k)}" value="${(OV.ontwikkeling||{})[k]??0}"></td></tr>`).join('')}
+        <tr><td>NEN-conditie (optioneel)</td><td>vanaf conditie <input class="n" data-ov="conditieVanaf" value="${OV.conditieVanaf??''}" placeholder="uit"></td><td><input class="n" data-ov="conditieAdd" value="${OV.conditieAdd??0}"></td></tr>
+        </tbody></table>
+        <p class="note"><b>Voorbeeld:</b> ${esc(vb)}</p>
+      </div>
+      <div class="card"><h3 style="margin-top:0">D-scorekaart – Detectability</h3>
+        <div class="field"><label>Definitie</label><textarea data-kdef="Ddefinitie" rows="2">${esc(K.Ddefinitie||'')}</textarea></div>
+        <table class="mini"><thead><tr><th style="width:40px">D</th><th style="width:150px">Detecteerbaarheid</th><th>Praktische betekenis</th></tr></thead><tbody>${K.D.map((d,i)=>`<tr><td><b>${d.score}</b></td><td><input data-sk="D" data-i="${i}" data-k="detect" value="${esc(d.detect)}"></td><td><input data-sk="D" data-i="${i}" data-k="criterium" value="${esc(d.criterium)}"></td></tr>`).join('')}</tbody></table>
+        <b style="display:block;margin-top:10px">D-bepalingsregels (systeemvoorstel uit inspecteerbaarheid)</b>
+        <table class="mini"><thead><tr><th>Inspecteerbaarheid</th><th style="width:70px">D</th><th>Betekenis</th></tr></thead><tbody>${C.INSPECTEERBAAR.map(k=>`<tr><td>${k}</td><td><input class="n" data-dv="${k}" value="${R.dVoorstel[k]}"></td><td class="note">${esc(C.dKlasse(R.dVoorstel[k]))}</td></tr>`).join('')}</tbody></table>
+      </div>
     </div>
     <h3>Beslisregels prioritering</h3>
     <div class="grid four">
       ${thr('rpn',R.rpn,'min','RPN waarde → basisprioriteit (rest = P5)')}
-      ${thr('safety',R.safety,'min','Safety-override (effect Veiligheid)')}
-      ${thr('compliance',R.compliance,'min','Compliance-override (effect Compliance)')}
+      ${thr('safety',R.safety,'min',`Safety-override (effect ${esc(R.safetyAspect)})`)}
+      ${thr('compliance',R.compliance,'min',`Compliance-override (effect ${esc(R.complianceAspect)})`)}
       ${thr('tPrio',R.tPrio,'max','T-prioriteit (jaar tot functieverlies; rest = P5)')}
     </div>
-    <div class="grid three" style="margin-top:14px">
+    <div class="grid two" style="margin-top:14px">
       <div class="card"><b>Laatste acceptabele jaar (offset t.o.v. startjaar)</b><table class="mini"><tbody>${C.PRIOS.map(p=>`<tr><td>${pill(p)}</td><td><input class="n" data-lj="${p}" value="${R.laatsteJaar[p]??''}" placeholder="—"></td></tr>`).join('')}</tbody></table></div>
-      <div class="card"><b>Systeemvoorstel O</b><table class="mini"><tbody><tr><td>Basis</td><td><input class="n" data-ov="basis" value="${R.oVoorstel.basis}"></td></tr>${Object.keys(R.oVoorstel.intensiteit).map(k=>`<tr><td>+ ${k}</td><td><input class="n" data-ovi="${k}" value="${R.oVoorstel.intensiteit[k]}"></td></tr>`).join('')}${R.oVoorstel.omvang.map((o,i)=>`<tr><td>+ bij omvang ≥ <input class="n" data-ovo="${i}" data-k="min" value="${o.min}"></td><td><input class="n" data-ovo="${i}" data-k="add" value="${o.add}"></td></tr>`).join('')}<tr><td>+ bij conditie ≥ <input class="n" data-ov="conditieVanaf" value="${R.oVoorstel.conditieVanaf}"></td><td><input class="n" data-ov="conditieAdd" value="${R.oVoorstel.conditieAdd}"></td></tr></tbody></table></div>
-      <div class="card"><b>Systeemvoorstel D (inspecteerbaarheid)</b><table class="mini"><tbody>${Object.keys(R.dVoorstel).map(k=>`<tr><td>${k}</td><td><input class="n" data-dv="${k}" value="${R.dVoorstel[k]}"></td></tr>`).join('')}</tbody></table>
-        <b style="display:block;margin-top:10px">T-klassen (jaar)</b><table class="mini"><tbody>${R.tKlassen.map((t,i)=>`<tr><td>${esc(t.klasse)}</td><td><input class="n" data-tk="${i}" value="${t.jaar}"></td></tr>`).join('')}</tbody></table></div>
+      <div class="card"><b>T-klassen (verwachte tijd tot functieverlies, jaar)</b><table class="mini"><tbody>${R.tKlassen.map((t,i)=>`<tr><td>${esc(t.klasse)}</td><td><input class="n" data-tk="${i}" value="${t.jaar}"></td></tr>`).join('')}</tbody></table><p class="note">Een faalwijze die al is opgetreden hoort in T = “Reeds aanwezig”, niet in O = 10.</p></div>
     </div>
     <h3>S = effectscores per waardeaspect (0–10)</h3>
     <p class="note">${esc(K.sUitleg||'')}</p>
-    <div class="tablewrap"><table><thead><tr><th>Score</th><th>Generiek</th>${ASP.map(a=>`<th class="wrap">${a}</th>`).join('')}</tr></thead><tbody>${K.S.map((s,i)=>`<tr><td>${s.score}</td><td><input data-sk="S" data-i="${i}" data-k="generiek" value="${esc(s.generiek)}"></td>${ASP.map((a,j)=>`<td class="wrap"><textarea data-sks="${i}" data-j="${j}">${esc(s.aspecten[j])}</textarea></td>`).join('')}</tr>`).join('')}</tbody></table></div>
+    <div class="tablewrap"><table><thead><tr><th>Score</th><th>Generiek</th>${ASP.map(a=>`<th class="wrap">${esc(a)}</th>`).join('')}</tr></thead><tbody>${K.S.map((s,i)=>`<tr><td>${s.score}</td><td><input data-sk="S" data-i="${i}" data-k="generiek" value="${esc(s.generiek)}"></td>${ASP.map((a,j)=>`<td class="wrap"><textarea data-sks="${i}" data-j="${j}">${esc(s.aspecten[j]||'')}</textarea></td>`).join('')}</tr>`).join('')}</tbody></table></div>
     <details style="margin-top:10px"><summary>Methodische waarschuwing & beoordelingsregels</summary><pre class="pre">${esc(K.methodischeWaarschuwing||'')}\n\n${esc(K.beoordelingsregels||'')}</pre></details>
-    <div class="toolbar" style="margin-top:8px"><button class="btn ghost" id="rulesReset">Beslisregels terug naar Excel-standaard</button></div>`;
+    <div class="toolbar" style="margin-top:8px"><button class="btn ghost" id="rulesReset">Scorecriteria en beslisregels terug naar standaard</button></div>`;
   const rerender = () => { C.save(); C.recompute(); };
+  $$('[data-kdef]').forEach(i => i.onchange = () => { K[i.dataset.kdef] = i.value; rerender(); });
   $$('[data-sk]').forEach(i => i.onchange = () => { K[i.dataset.sk][+i.dataset.i][i.dataset.k] = i.value; rerender(); });
   $$('[data-sks]').forEach(i => i.onchange = () => { K.S[+i.dataset.sks].aspecten[+i.dataset.j] = i.value; rerender(); });
   $$('[data-rule]').forEach(i => i.onchange = () => { const r=R[i.dataset.rule][+i.dataset.i]; r[i.dataset.k] = i.dataset.k==='prio' ? i.value : num(i.value); rerender(); });
   $$('[data-lj]').forEach(i => i.onchange = () => { R.laatsteJaar[i.dataset.lj] = num(i.value); rerender(); });
-  $$('[data-ov]').forEach(i => i.onchange = () => { R.oVoorstel[i.dataset.ov] = num(i.value)??0; rerender(); });
-  $$('[data-ovi]').forEach(i => i.onchange = () => { R.oVoorstel.intensiteit[i.dataset.ovi] = num(i.value)??0; rerender(); });
-  $$('[data-ovo]').forEach(i => i.onchange = () => { R.oVoorstel.omvang[+i.dataset.ovo][i.dataset.k] = num(i.value)??0; rerender(); });
-  $$('[data-dv]').forEach(i => i.onchange = () => { R.dVoorstel[i.dataset.dv] = num(i.value)??8; rerender(); });
+  $$('[data-ov]').forEach(i => i.onchange = () => { OV[i.dataset.ov] = i.dataset.ov==='conditieVanaf' ? num(i.value) : (num(i.value)??0); rerender(); renderScorekaarten(el); });
+  $$('[data-ovi]').forEach(i => i.onchange = () => { OV.intensiteit[i.dataset.ovi] = num(i.value)??0; rerender(); renderScorekaarten(el); });
+  $$('[data-ovw]').forEach(i => i.onchange = () => { OV.ontwikkeling = OV.ontwikkeling||{}; OV.ontwikkeling[i.dataset.ovw] = num(i.value)??0; rerender(); renderScorekaarten(el); });
+  $$('[data-ovo]').forEach(i => i.onchange = () => { OV.omvang[+i.dataset.ovo][i.dataset.k] = num(i.value)??0; rerender(); renderScorekaarten(el); });
+  $$('[data-dv]').forEach(i => i.onchange = () => { R.dVoorstel[i.dataset.dv] = num(i.value)??8; rerender(); renderScorekaarten(el); });
   $$('[data-tk]').forEach(i => i.onchange = () => { R.tKlassen[+i.dataset.tk].jaar = num(i.value); rerender(); });
-  $('#rulesReset').onclick = () => { if(confirm('Beslisregels en systeemvoorstellen terugzetten naar de Excel-standaard?')) { S.rules = C.defaultRules(); S.scorekaarten = C.clone(C.seed.scorekaarten); rerender(); render(); } };
+  $('#rulesReset').onclick = () => { if(confirm('Scorecriteria, bepalingsregels en beslisregels terugzetten naar de standaard?')) { const keep = { safetyAspect: S.rules.safetyAspect, complianceAspect: S.rules.complianceAspect }; S.rules = Object.assign(C.defaultRules(), keep); const sk = C.clone(C.seed.scorekaarten); sk.S.forEach(s => { while (s.aspecten.length < ASP.length) s.aspecten.push(''); }); S.scorekaarten = sk; rerender(); render(); } };
 }
+function pctOf(list, dflt) { const m = Math.min(...list.map(x=>x.min)); return isFinite(m) ? Math.round(m*100)+'%' : dflt; }
 
 function renderParams(el) {
   const S = C.state.settings, P = S.params, bel = C.belangen(), prof = S.profielen[P.profiel] || [];
