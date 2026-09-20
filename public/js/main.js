@@ -2,8 +2,9 @@
 (() => {
 const C = window.STEMI, U = window.STEMI_UI, DB = window.STEMI_DB; const { $, $$, esc } = C;
 function switchTab(t) { $$('#tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===t)); $$('.tab').forEach(s=>s.classList.toggle('active',s.id==='tab-'+t)); window.scrollTo(0,0); if (t === 'scenario') try { U.renderScenario(); } catch(e) { console.error(e); }
+  if (t === 'kwaliteit') try { U.renderKwaliteit(); } catch(e) { console.error(e); }
   if (t === 'rapport') try { U.renderRapport(); } catch(e) { console.error(e); } }
-const R = { projecten: () => U.renderProjecten(), overzicht: () => U.renderOverzicht(), eigenaar: () => U.renderEigenaar(), inspectie: () => U.renderInspectie(), specialist: () => U.renderSpecialist(), systeem: () => U.renderSysteem(), mjop: () => U.renderMjop(), scenario: () => { if (document.querySelector('#tab-scenario').classList.contains('active')) U.renderScenario(); }, rapport: () => { if (document.querySelector('#tab-rapport').classList.contains('active')) U.renderRapport(); }, /* rapport is zwaar: alleen opbouwen als de tab open staat */ instellingen: () => U.renderInstellingen(), uitleg: () => U.renderUitleg() };
+const R = { projecten: () => U.renderProjecten(), overzicht: () => U.renderOverzicht(), eigenaar: () => U.renderEigenaar(), inspectie: () => U.renderInspectie(), specialist: () => U.renderSpecialist(), systeem: () => U.renderSysteem(), mjop: () => U.renderMjop(), scenario: () => { if (document.querySelector('#tab-scenario').classList.contains('active')) U.renderScenario(); }, rapport: () => { if (document.querySelector('#tab-rapport').classList.contains('active')) U.renderRapport(); }, kwaliteit: () => { if (document.querySelector('#tab-kwaliteit').classList.contains('active')) U.renderKwaliteit(); }, /* rapport is zwaar: alleen opbouwen als de tab open staat */ instellingen: () => U.renderInstellingen(), uitleg: () => U.renderUitleg() };
 function renderAll() { C.recompute(); for (const k in R) { try { R[k](); } catch(e) { console.error('render', k, e); $('#tab-'+k).innerHTML = `<p class="warn">Fout bij weergeven: ${esc(e.message)}</p>`; } } renderHeader(); }
 Object.assign(U, { switchTab, renderAll });
 
@@ -21,6 +22,7 @@ async function ensureDossier() {
   C.setState(d.state);
   // AI-voorstellen staan in een eigen tabel; wat nog in een oude state zit blijft als terugval bestaan
   try { const ai = await DB.aiVan(d.id); C.state.ai = { ...(C.state.ai || {}), ...ai }; } catch (e) { console.warn('ai laden', e); }
+  try { await U.laadReferentie(); } catch (e) { console.warn('referentie laden', e); }
 }
 async function start() {
   const shared = await DB.getShared(); C.applySharedCfg(shared);

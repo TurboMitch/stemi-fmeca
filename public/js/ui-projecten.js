@@ -29,6 +29,7 @@ async function renderSelector() {
 async function openProject(id) {
   await DB.flush(C.state); const d = await DB.openDossier(id); C.setState(d.state);
   try { C.state.ai = { ...(C.state.ai || {}), ...(await DB.aiVan(id)) }; } catch (e) { console.warn('ai laden', e); }
+  try { await U().laadReferentie(); } catch (e) { console.warn('referentie laden', e); }
   leden = null; U().renderAll(); C.toast('Project geopend: ' + d.naam);
   U().switchTab(C.state.settings.wizardVoltooid ? 'overzicht' : 'eigenaar');
 }

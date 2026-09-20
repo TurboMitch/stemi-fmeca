@@ -112,6 +112,7 @@ function qualityHtml(S) {
   return `<details class="card ${kritiek.length?'blok':''}" style="margin:0 0 12px" ${q.items.some(i=>i.pct<0.9)?'open':''}><summary><b>Datakwaliteit</b> ${kritiek.length?`<span class="warn">– ${kritiek.length} veld(en) vrijwel leeg die de rekenkern nodig heeft: ${esc(kritiek.map(i=>i.label).join(', '))}</span>`:`<span class="note">– ${q.items.filter(i=>i.pct>=0.9).length}/${q.items.length} velden ≥ 90% gevuld${q.onzeker?` · ${q.onzeker} bibliotheekkoppeling(en) onzeker`:''}</span>`}</summary>
     <table class="mini" style="margin-top:6px"><tbody>${q.items.map(it=>`<tr>${bar(it)}</tr>`).join('')}</tbody></table>
     ${onb.length?`<p class="note warn">Niet-herkende waarden: ${onb.map(([k,v])=>`${k}: ${esc(v.join(', '))}`).join(' · ')}</p>`:''}
+    ${(() => { const ov = window.STEMI_PREP.injectieOverzicht(S.inspectie); return ov.aantal ? `<p class="note warn">In ${ov.aantal} regel(s) staat tekst die op een instructie aan de AI lijkt (regel ${ov.treffers.slice(0,6).map(t=>t.id).join(', ')}${ov.aantal>6?'…':''}). Dat wordt onschadelijk gemaakt voordat de agent het ziet en in tab 03 gemeld, maar controleer of de constatering inhoudelijk klopt.</p>` : ''; })()}
     <p class="note">Lege velden blokkeren niets: het O-/D-voorstel meldt welke input ontbreekt en de AI vult aan met lager vertrouwen. Aanvullen kan in deze tabel of via een nieuwe import (toevoegen).</p></details>`;
 }
 function render() {

@@ -75,6 +75,42 @@ async function herstelUitPrullenbak(id) { const { error } = await sb.from('dossi
 async function definitiefVerwijderen(id) { const { error } = await sb.from('dossiers').delete().eq('id', id); if (error) throw error; if (dossier?.id === id) { dossier = null; localStorage.removeItem('stemi_dossier'); } }
 async function zetPortefeuille(id, naam) { const { error } = await sb.from('dossiers').update({ portefeuille: naam || null, updated_by: user.id }).eq('id', id); if (error) throw error; if (dossier?.id === id) dossier.portefeuille = naam || null; }
 
+// ---------- AI-kwaliteit: referentieset en evaluaties ----------
+/** door mensen vastgestelde referentiewaarden van dit project, als object regel -> rij */
+async function referentieVan(dossierId) {
+  const id = dossierId || dossier?.id; if (!id) return {};
+  const { data, error } = await sb.from('ai_referentie').select('*').eq('dossier_id', id);
+  if (error) throw error;
+  return Object.fromEntries((data || []).map(r => [r.regel, r]));
+}
+const hashVan = t => { const s2 = JSON.stringify(t ?? ''); let h = 0; for (let i = 0; i < s2.length; i++) { h = (h * 31 + s2.charCodeAt(i)) | 0; } return String(h); };
+async function zetReferentie(rij) {
+  if (!dossier) throw new Error('geen project geopend');
+  const { error } = await sb.from('ai_referentie').upsert({ dossier_id: dossier.id, regel: rij.regel, waarden: rij.waarden,
+    invoer: rij.invoer ?? null, invoer_hash: hashVan(rij.invoer), element: rij.element || null,
+    vastgesteld_door: user.id, vastgesteld_op: new Date().toISOString(), opmerking: rij.opmerking ?? null });
+  if (error) throw error;
+}
+async function wisReferentie(regel) {
+  if (!dossier) return; const q = sb.from('ai_referentie').delete().eq('dossier_id', dossier.id);
+  const { error } = regel == null ? await q : await q.eq('regel', regel); if (error) throw error;
+}
+async function bewaarEvaluatie(ev) {
+  if (!dossier) throw new Error('geen project geopend');
+  const { data, error } = await sb.from('ai_evaluaties').insert({ dossier_id: dossier.id, model: ev.model,
+    prompt_versie: ev.promptVersie || null, context_hash: hashVan(ev.context), n: ev.n || 0, mislukt: ev.mislukt || 0,
+    resultaat: ev.resultaat, tokens_in: ev.tokensIn ?? null, tokens_uit: ev.tokensUit ?? null,
+    kosten_usd: ev.kostenUsd ?? null, duur_ms: ev.duurMs ?? null, door: user.id, gereed_op: new Date().toISOString() })
+    .select().single();
+  if (error) throw error; return data;
+}
+async function evaluatiesVan(limit = 25) {
+  if (!dossier) return [];
+  const { data, error } = await sb.from('ai_evaluaties').select('*').eq('dossier_id', dossier.id).order('gestart_op', { ascending: false }).limit(limit);
+  if (error) throw error; return data || [];
+}
+async function wisEvaluatie(id) { const { error } = await sb.from('ai_evaluaties').delete().eq('id', id); if (error) throw error; }
+
 // ---------- leden en gebruikers ----------
 async function ledenVan(dossierId) {
   const { data, error } = await sb.from('dossier_leden').select('user_id,rol,toegevoegd_op').eq('dossier_id', dossierId); if (error) throw error;
@@ -150,6 +186,6 @@ function showLogin(onDone) {
   setTimeout(() => $('#loginUser').focus(), 50);
 }
 return { sb, init, login, logout, token, get user(){return user}, get profile(){return profile}, get dossier(){return dossier}, listDossiers, openDossier, createDossier, renameDossier, duplicateDossier, deleteDossier,
-  herstelUitPrullenbak, definitiefVerwijderen, zetPortefeuille, ledenVan, zetLid, verwijderLid, alleGebruikers, zetGebruikersRol, aiVan, zetAi, zetAlleAi, wisAi, magSchrijven, magBeheren, mijnRolIn,
+  herstelUitPrullenbak, definitiefVerwijderen, zetPortefeuille, referentieVan, zetReferentie, wisReferentie, bewaarEvaluatie, evaluatiesVan, wisEvaluatie, hashVan, ledenVan, zetLid, verwijderLid, alleGebruikers, zetGebruikersRol, aiVan, zetAi, zetAlleAi, wisAi, magSchrijven, magBeheren, mijnRolIn,
   metaVan, backupsVan, herstelDossier, persist, flush, logAudit, logAiRun, logFout, foutSamenvatting, laatsteFouten, aiRunsVan, auditFromDb, getSetting, setSetting, getShared, setShared, get isAdmin(){return isAdmin()}, showLogin, setStatus };
 })();

@@ -286,6 +286,75 @@ function pasBudgetToe(plan) {
   if (n) save(); return n;
 }
 
+/** Prioriteitsbepaling op losse waarden: gebruikt door recompute en door de AI-evaluatie,
+ *  zodat de evaluatie exact dezelfde beslisregels toepast als het systeemmodel. */
+function prioVan(effect, O, D, Tjaar, fac) {
+  const R = state.settings.rules, f = fac || belangen().map(b => b/5);
+  const eff = ASP.map((_, i) => num(effect?.[i]) ?? 0);
+  const Stech = Math.max(...eff), RPNtech = (O != null && D != null) ? Stech*O*D : null;
+  const impact = eff.map((e, i) => e*f[i]), Swaarde = Math.max(...impact);
+  const RPNwaarde = (O != null && D != null) ? Swaarde*O*D : null;
+  const basis = prioFromThresholds(R.rpn, RPNwaarde, 'P5');
+  const iS = Math.max(0, ASP.indexOf(R.safetyAspect || 'Veiligheid')), iC = Math.max(0, ASP.indexOf(R.complianceAspect || 'Compliance'));
+  const safety = prioFromThresholds(R.safety, eff[iS], '') || '';
+  const compliance = prioFromThresholds(R.compliance, eff[iC], '') || '';
+  const tPrio = prioT(Tjaar);
+  const cand = [basis, safety, compliance, tPrio].filter(Boolean);
+  const prio = PRIOS.find(p => cand.includes(p)) || null;
+  return { effect: eff, Stech, RPNtech, impact, Swaarde, RPNwaarde, basis, safety, compliance, tPrio, prio,
+    drivers: [basis===prio&&'RPN', safety===prio&&'Safety', compliance===prio&&'Compliance', tPrio===prio&&'Tijd'].filter(Boolean),
+    domTech: ASP[eff.indexOf(Stech)], domWaarde: Swaarde === 0 ? 'Geen waarde-impact' : ASP[impact.indexOf(Swaarde)] };
+}
+
+// ---------- AI-kwaliteit: voorstel vergelijken met de menselijke referentie ----------
+const AFSTAND_PRIO = (a, b) => (a && b) ? Math.abs(PRIOS.indexOf(a) - PRIOS.indexOf(b)) : null;
+/** Vergelijkt één AI-voorstel met de vastgestelde referentiewaarden van dezelfde regel.
+ *  Naast de losse velden vergelijkt hij ook de uitkomst die er echt om gaat: de prioriteit. */
+function vergelijkVoorstel(ref, ai, opts = {}) {
+  const fac = opts.fac || belangen().map(b => b/5);
+  const g = (o, k) => o == null ? null : num(o[k]);
+  const veld = (k) => { const a = g(ref, k), b = g(ai, k); return { ref: a, ai: b, afw: (a == null || b == null) ? null : Math.abs(a - b), teken: (a == null || b == null) ? null : b - a }; };
+  const O = veld('O'), D = veld('D'), T = veld('Tjaar');
+  if (T.ref != null && T.ai != null) T.factor = (T.ref === 0 || T.ai === 0) ? null : Math.max(T.ref, T.ai) / Math.min(T.ref, T.ai);
+  const eRef = Array.isArray(ref?.effect) ? ref.effect.map(num) : null, eAi = Array.isArray(ai?.effect) ? ai.effect.map(num) : null;
+  let effect = { gem: null, max: null, per: null };
+  if (eRef && eAi && eRef.length === eAi.length) {
+    const per = eRef.map((v, i) => (v == null || eAi[i] == null) ? null : Math.abs(eAi[i] - v));
+    const geldig = per.filter(v => v != null);
+    effect = { gem: geldig.length ? geldig.reduce((a, b) => a + b, 0) / geldig.length : null, max: geldig.length ? Math.max(...geldig) : null, per };
+  }
+  const kRef = g(ref, 'kostenSpecialist'), kAi = g(ai, 'kostenSpecialist');
+  const kosten = { ref: kRef, ai: kAi, afw: (kRef == null || kAi == null) ? null : Math.abs(kAi - kRef),
+    pct: (kRef == null || kAi == null || kRef === 0) ? null : Math.abs(kAi - kRef) / kRef };
+  // de uitkomst die telt: leidt het voorstel tot dezelfde prioriteit?
+  const pRef = prioVan(eRef || [], O.ref, D.ref, T.ref, fac);
+  const pAi = prioVan(eAi || eRef || [], O.ai ?? O.ref, D.ai ?? D.ref, T.ai ?? T.ref, fac);
+  const prio = { ref: pRef.prio, ai: pAi.prio, gelijk: pRef.prio === pAi.prio, afstand: AFSTAND_PRIO(pRef.prio, pAi.prio),
+    rpnRef: pRef.RPNwaarde, rpnAi: pAi.RPNwaarde };
+  return { O, D, T, effect, kosten, prio };
+}
+/** Bundelt de losse vergelijkingen tot cijfers per veld over de hele referentieset. */
+function vatEvaluatieSamen(vergelijkingen) {
+  const num2 = v => Math.round(v * 100) / 100;
+  const stat = (lijst) => { const v = lijst.filter(x => x != null); if (!v.length) return null;
+    const gem = v.reduce((a, b) => a + b, 0) / v.length;
+    return { n: v.length, gem: num2(gem), max: num2(Math.max(...v)), mediaan: num2(v.slice().sort((a, b) => a - b)[Math.floor(v.length / 2)]) }; };
+  const deel = (lijst, test) => { const v = lijst.filter(x => x != null); return v.length ? num2(v.filter(test).length / v.length) : null; };
+  const aO = vergelijkingen.map(x => x.O.afw), aD = vergelijkingen.map(x => x.D.afw), aT = vergelijkingen.map(x => x.T.afw);
+  const prios = vergelijkingen.map(x => x.prio);
+  return {
+    n: vergelijkingen.length,
+    O: { ...(stat(aO) || {}), binnen1: deel(aO, v => v <= 1), bias: (() => { const v = vergelijkingen.map(x => x.O.teken).filter(x => x != null); return v.length ? num2(v.reduce((a, b) => a + b, 0) / v.length) : null; })() },
+    D: { ...(stat(aD) || {}), binnen1: deel(aD, v => v <= 1), bias: (() => { const v = vergelijkingen.map(x => x.D.teken).filter(x => x != null); return v.length ? num2(v.reduce((a, b) => a + b, 0) / v.length) : null; })() },
+    T: { ...(stat(aT) || {}), binnenFactor2: deel(vergelijkingen.map(x => x.T.factor), v => v <= 2) },
+    effect: stat(vergelijkingen.map(x => x.effect.gem)),
+    kosten: { ...(stat(vergelijkingen.map(x => x.kosten.pct)) || {}), binnen25pct: deel(vergelijkingen.map(x => x.kosten.pct), v => v <= 0.25) },
+    prio: { gelijk: prios.length ? num2(prios.filter(p => p.gelijk).length / prios.length) : null,
+      binnen1klasse: deel(prios.map(p => p.afstand), v => v <= 1),
+      afwijkend: prios.filter(p => !p.gelijk).length }
+  };
+}
+
 function recompute() {
   const S = state.settings, P = S.params, R = S.rules, bel = belangen(), fac = bel.map(b => b/5);
   const start = num(P.startjaar) ?? 2026, horizon = num(P.horizon) ?? 40;
@@ -312,20 +381,13 @@ function recompute() {
     const faalwijze = sp.faalwijze || libE?.faalwijze || '';
     const kostenSpec = num(sp.kostenSpecialist);
     const definitieveKosten = kostenSpec ?? eersteVoorstel;
-    const Stech = Math.max(...effect), RPNtech = (O != null && D != null) ? Stech*O*D : null;
-    const impact = effect.map((e, i) => e*fac[i]), Swaarde = Math.max(...impact);
-    const RPNwaarde = (O != null && D != null) ? Swaarde*O*D : null;
-    const basis = prioFromThresholds(R.rpn, RPNwaarde, 'P5');
-    const iS = Math.max(0, ASP.indexOf(R.safetyAspect || 'Veiligheid')), iC = Math.max(0, ASP.indexOf(R.complianceAspect || 'Compliance'));
-    const safety = prioFromThresholds(R.safety, effect[iS], '') || '';
-    const compliance = prioFromThresholds(R.compliance, effect[iC], '') || '';
-    const tPrio = prioT(Tjaar);
+    const pv = prioVan(effect, O, D, Tjaar, fac);
+    const { Stech, RPNtech, impact, Swaarde, RPNwaarde, basis, safety, compliance, tPrio } = pv;
     const nenSignaal = (num(insp.conditie) ?? 0) >= (num(P.nenSignaal) ?? 5) ? 'Technische toestand vraagt expliciete beoordeling' : '';
-    const cand = [basis, safety, compliance, tPrio].filter(Boolean);
-    const prio = PRIOS.find(p => cand.includes(p)) || null;
+    const prio = pv.prio;
     const off = prio ? R.laatsteJaar[prio] : null; const laatsteJaar = off == null ? null : start + off;
     const deadline = Tjaar == null ? null : start + Math.ceil(Tjaar);
-    const domTech = ASP[effect.indexOf(Stech)], domWaarde = Swaarde === 0 ? 'Geen waarde-impact' : ASP[impact.indexOf(Swaarde)];
+    const domTech = pv.domTech, domWaarde = pv.domWaarde;
     const compleet = faalwijze && O != null && D != null && Tjaar != null;
     const bronnen = Object.values(sp.prov||{}).map(p=>p.bron);
     const aiStatus = bronnen.includes('mens') ? 'Mens gecontroleerd' : bronnen.includes('ai') ? 'AI ingevuld' : bronnen.includes('excel') ? 'Uit Excel' : 'Systeemvoorstel';
@@ -333,8 +395,7 @@ function recompute() {
       oSys, oInfo, dSys, tKlSys, tJaarSys, tTxtSys, tInfo, O, D, Tklasse, Tjaar, effect, faalwijze, kostenSpec, definitieveKosten,
       kostenbron: kostenSpec != null ? 'Technisch specialist' : 'Inspectie/softwarevoorstel',
       Stech, RPNtech, impact, Swaarde, RPNwaarde, basis, safety, compliance, tPrio, nenSignaal, prio, laatsteJaar, deadline, domTech, domWaarde,
-      status: compleet ? 'Compleet' : 'Aanvullen', aiStatus,
-      drivers: [basis===prio&&'RPN', safety===prio&&'Safety', compliance===prio&&'Compliance', tPrio===prio&&'Tijd'].filter(Boolean) };
+      status: compleet ? 'Compleet' : 'Aanvullen', aiStatus, drivers: pv.drivers };
     r.maatregelen = maatregelenVan(r).map(m => ({...m, jaren: expandCyclus(m, jaren)}));
     r.planJaar = r.maatregelen[0]?.jaar ?? null;
     r.kostenHorizon = r.maatregelen.reduce((s,m)=> s + (m.kosten??0)*m.jaren.length, 0);
@@ -563,6 +624,6 @@ return { ASP, ASP_SHORT, ONTWIKKELING, INTENSITEIT, ERNST, INSPECTEERBAAR, PRIOS
   $, $$, esc, num, eur, pct, pct1, pill, uid, toast, clone, defaultRules, defaultSettings,
   get seed(){return seed}, get lib(){return lib}, get libByCode(){return libByCode}, get state(){return state}, set state(v){state=v}, get cfg(){return cfg}, get calc(){return calc},
   save, saveCfg, audit, kpiVan, setAi, getSp, setSp, belangen, libEntry, systeemvoorstelO, voorstelD, voorstelDtekst, voorstelT, tJaarVanKlasse, OKANS, DTEKST,
-  maatregelenVan, expandCyclus, recompute, WEERGAVEN, FIN_DEFAULT, inflatieVan, indexFactor, btwFactor, npvFactor, bedrag, weergaveDefault, budgetPlan, pasBudgetToe,
+  maatregelenVan, expandCyclus, recompute, prioVan, vergelijkVoorstel, vatEvaluatieSamen, WEERGAVEN, FIN_DEFAULT, inflatieVan, indexFactor, btwFactor, npvFactor, bedrag, weergaveDefault, budgetPlan, pasBudgetToe,
   bepaalT, tKlasseVanJaar, curveFactor, restjarenVan, herstelEffect, conditiePrognose, evalueerScenario, pasScenarioToe, SCENARIO_STRATEGIE, startFoutafhandeling, callAgent, modelFor, parseJSON, loadData, resetState, emptyState, setState, applySharedCfg, migrateV1 };
 })();

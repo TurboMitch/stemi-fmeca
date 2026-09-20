@@ -178,6 +178,10 @@ function rapportHtml(o = {}) {
     <h3>${H.bijlagen}.1 Herkomst en controle</h3>
     ${tbl(['Herkomst','Aantal vastgelegde velden'], Object.entries(bronnen).map(([b,c])=>[({excel:'Inspectiebestand',mens:'Technisch specialist',ai:'AI-voorstel',systeem:'Systeemregel'})[b]||b, String(c)]))}
     <p class="note">${aiRegels} regels zijn door de AI voorgesteld; ${flags} voorgestelde waarden zijn door de bewaking geweigerd of gesignaleerd en door de specialist beoordeeld. De volledige wijzigingshistorie staat in het model (audittrail) en in de database.</p>
+    ${(() => { const ev = window.STEMI_UI.laatsteEvaluatie?.(); const sm = ev?.resultaat?.samenvatting; if (!sm) return '';
+      const p = v => v == null ? '—' : Math.round(v*100) + '%', g = v => v == null ? '—' : String(Math.round(v*100)/100).replace('.', ',');
+      return `<h4>Gemeten kwaliteit van de AI-laag</h4>
+      <p>De AI-voorstellen zijn getoetst aan een referentieset van <b>${sm.n}</b> regels die een technisch specialist zelf heeft vastgesteld. Op die set kwam het model (${esc(ev.model)}) in <b>${p(sm.prio.gelijk)}</b> van de regels op dezelfde prioriteit uit, en in ${p(sm.prio.binnen1klasse)} op dezelfde of een naastgelegen klasse. Gemiddelde afwijking: ${g(sm.O.gem)} punt op de kans O (${p(sm.O.binnen1)} binnen één punt), ${g(sm.D.gem)} punt op de detecteerbaarheid D, ${g(sm.T.gem)} jaar op het faalmoment T en ${g(sm.effect?.gem)} punt op de effectscores. Meting van ${new Date(ev.gestart_op).toLocaleDateString('nl-NL')}.</p>`; })()}
     ${!o.audit ? '' : `<h3>${H.bijlagen}.2 Laatste wijzigingen</h3>
     ${tbl(['Tijd','Gebruiker','Regel','Veld','Oud','Nieuw','Herkomst'], (C.state.audit||[]).slice(0,60).map(a=>[
       new Date(a.ts).toLocaleString('nl-NL'), esc(a.user||''), String(a.regel??''), esc(a.veld??''),
