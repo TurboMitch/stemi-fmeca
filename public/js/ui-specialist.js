@@ -89,6 +89,14 @@ function keurAI(p, r) {
   const hor = num(C.state.settings.params.horizon) || 15;
   if (p.Tjaar != null && p.Tjaar !== '') { const t = num(p.Tjaar); if (t == null || t < 0 || t > hor * 3) { flags.push({ veld:'Tjaar', waarde: p.Tjaar, reden:`geen geloofwaardige termijn (0–${hor * 3} jaar)` }); delete p.Tjaar; } }
   if (p.Tklasse && !tklassen().includes(p.Tklasse)) { flags.push({ veld:'Tklasse', waarde: p.Tklasse, reden:'geen bestaande T-klasse' }); delete p.Tklasse; }
+  // T tegen het restlevensduurmodel: sterk afwijken mag, maar dan wel met een reden in de onderbouwing.
+  // Dit is een signaal, geen weigering: de specialist kan een restlevensduur kennen die het model niet heeft.
+  if (p.Tjaar != null && p.Tjaar !== '' && r.tInfo?.bron === 'model' && r.tInfo.jaar != null) {
+    const t = num(p.Tjaar), m = r.tInfo.jaar, onder = String(p.onderbouwingT || '');
+    const grens = Math.max(1, m * 0.25), boven = Math.max(2, m * 4);
+    const heeftReden = onder.length > 40 && /levensduur|restlevensduur|vervangen|recent|ervaring|eerder|type|materiaal|garantie|inspectie|meting|monster|onderzoek|gebruik|belasting/i.test(onder);
+    if ((t < grens || t > boven) && !heeftReden) flags.push({ veld:'Tjaar', waarde: p.Tjaar, reden:`wijkt sterk af van het restlevensduurmodel (${m} jaar: ${r.tInfo.uitleg}) zonder technische reden in de onderbouwing`, signaal: true });
+  }
   // kosten: alleen met een controleerbare basis (hoeveelheid x kengetal) en binnen een bandbreedte
   if (p.kostenSpecialist != null && p.kostenSpecialist !== '') {
     const k = num(p.kostenSpecialist);
@@ -121,7 +129,8 @@ async function herkeurAlles(opts = {}) {
   C.toast(`${bijgewerkt} regel(s) herkeurd, ${nieuweFlags} signaal/signalen over${nietGevonden?`, ${nietGevonden} zonder bewaarde AI-run`:''}`, 8000);
   return { bijgewerkt, nieuweFlags, nietGevonden };
 }
-function flagsTotaal() { return C.calc.rows.reduce((a, r) => a + flagsVan(r.id).length, 0); }
+function flagsTotaal() { return C.calc.rows.reduce((a, r) => a + flagsVan(r.id).filter(f => !f.signaal).length, 0); }
+function signalenTotaal() { return C.calc.rows.reduce((a, r) => a + flagsVan(r.id).filter(f => f.signaal).length, 0); }
 /** past AI-voorstel toe; menselijke velden blijven staan tenzij overschrijf=true */
 function applyAI(id, keys, overschrijf=false) {
   const ai = C.state.ai[id]; if (!ai) return 0; const sp = C.getSp(id); let n=0;
@@ -227,7 +236,7 @@ function render() {
       <button class="btn ghost" id="aiChat">Vraag de agent</button>
       ${laatsteMislukt.length?`<button class="btn ghost" id="aiRetry" title="alleen de regels die faalden opnieuw proberen">Mislukte regels opnieuw (${laatsteMislukt.length})</button>`:''}
       <span class="spacer"></span>
-      <span class="note">${nAI}/${R.length} door AI · ${nMens} met menselijke correctie${flagsTotaal()?` · <span class="warn">${flagsTotaal()} waarde(n) niet overgenomen na controle</span>`:''} · model <b>${esc(C.modelFor('specialist'))}</b></span>
+      <span class="note">${nAI}/${R.length} door AI · ${nMens} met menselijke correctie${flagsTotaal()?` · <span class="warn">${flagsTotaal()} waarde(n) niet overgenomen na controle</span>`:''}${signalenTotaal()?` · <span class="oranje">${signalenTotaal()} gesignaleerd ter controle</span>`:''} · model <b>${esc(C.modelFor('specialist'))}</b></span>
       <label class="note"><input type="checkbox" id="showSys" ${C.cfg.showSys?'checked':''}> systeemvoorstellen tonen</label>
     </div>
     <div class="tablewrap"><table><thead><tr><th>ID</th><th>Element</th><th class="wrap">Constatering</th><th>Cond.</th><th class="wrap">Faalwijze</th><th>O</th><th class="wrap">Onderbouwing O</th><th>D</th><th class="wrap">Onderbouwing D</th><th>T-klasse</th><th>T jr</th>${ASP_SHORT.map((a,i)=>`<th title="${ASP[i]}">${a}</th>`).join('')}<th class="wrap">Maatregel</th><th>Rest S/O/D</th><th>Kosten spec. €</th><th class="wrap">Onderbouwing kosten</th><th>Scope</th><th>Status</th><th>Verantwoording</th></tr></thead><tbody>
@@ -276,7 +285,8 @@ function openAI(id) {
     ${ai.gebruikteBronnen?.length?`<h3>Gebruikte bronnen</h3><ul>${ai.gebruikteBronnen.map(o=>`<li>${esc(o)}</li>`).join('')}</ul>`:''}
     ${ai.aanvullendOnderzoek?`<h3>Aanvullend onderzoek</h3><p>${esc(ai.aanvullendOnderzoek)}</p>`:''}
     ${ai.onzekerheden?.length?`<h3>Onzekerheden</h3><ul>${ai.onzekerheden.map(o=>`<li>${esc(o)}</li>`).join('')}</ul>`:''}
-    ${ai._flags?.length?`<h3>Niet overgenomen (plausibiliteitscontrole)</h3><table class="diff"><tbody>${ai._flags.map(f=>`<tr><td><b>${esc(f.veld)}</b></td><td>${esc(String(f.waarde))}</td><td class="warn">${esc(f.reden)}</td></tr>`).join('')}</tbody></table>`:''}
+    ${ai._flags?.filter(f=>!f.signaal).length?`<h3>Niet overgenomen (plausibiliteitscontrole)</h3><table class="diff"><tbody>${ai._flags.filter(f=>!f.signaal).map(f=>`<tr><td><b>${esc(f.veld)}</b></td><td>${esc(String(f.waarde))}</td><td class="warn">${esc(f.reden)}</td></tr>`).join('')}</tbody></table>`:''}
+    ${ai._flags?.filter(f=>f.signaal).length?`<h3>Wel overgenomen, maar gesignaleerd</h3><p class="note">Deze waarden zijn aangehouden; ze wijken af van het systeemvoorstel en vragen een blik van de specialist.</p><table class="diff"><tbody>${ai._flags.filter(f=>f.signaal).map(f=>`<tr><td><b>${esc(f.veld)}</b></td><td>${esc(String(f.waarde))}</td><td class="oranje">${esc(f.reden)}</td></tr>`).join('')}</tbody></table>`:''}
     <details id="aiInputBox"><summary>Input naar de agent (herleidbaarheid)</summary><p class="note">De volledige prompt en context staan in de database (tabel ai_runs). <button class="btn ghost small" id="aiLoadInput">Ophalen</button></p><pre class="mono pre hidden" id="aiInputPre"></pre></details>
     <details><summary>Ruwe JSON van de agent</summary><pre class="mono pre">${esc(JSON.stringify(ai,null,1))}</pre></details>` : '<p class="note" style="margin-top:12px">Nog geen AI-voorstel voor deze regel.</p>'}
     <h3>Wijzigingshistorie (${hist.length})</h3>${hist.length?`<table class="diff"><tbody>${hist.slice(0,12).map(h=>`<tr><td class="note">${new Date(h.ts).toLocaleString('nl-NL')}</td><td><b>${esc(h.veld)}</b> <span class="prov ${BRON[h.bron]?.[1]||''}">${esc(h.bron)}</span></td><td>${esc(fmt(h.oud))} → ${esc(fmt(h.nieuw))}${h.model?`<div class="note">${esc(h.model)}</div>`:''}</td></tr>`).join('')}</tbody></table>`:'<p class="note">Geen wijzigingen vastgelegd.</p>'}`;

@@ -161,6 +161,24 @@ ok('core.js en prep.js laden in Node', !!C && !!P);
   ok('T-model uitzetten laat alleen de vaste regels over', C.bepaalT({ bouwdeel: 'Daken', intensiteit: 'Gevorderd' }, { bouwdeel: 'Daken' }).jaar === null);
   C.state.settings.rules.tRegels.actief = true; C.recompute();
 
+  // ---------- T-signaal op AI-output ----------
+  laad('ui-specialist.js');
+  const keur = ctx.window.__keur;
+  if (!keur) ok('testhook voor de plausibiliteitscontrole beschikbaar', false);
+  else {
+    const rij = { insp: { bouwdeel: 'Dakafwerkingen', intensiteit: 'Gevorderd' }, tInfo: C.bepaalT({ bouwdeel: 'Dakafwerkingen', intensiteit: 'Gevorderd' }, { bouwdeel: 'Dakafwerkingen' }),
+      eersteVoorstel: null, kostenLokaal: null, kostenElement: null, insprow: null };
+    const model = rij.tInfo.jaar;
+    let p1 = { Tjaar: model, onderbouwingT: 'Sluit aan op het systeemvoorstel.' }; let f1 = keur(p1, rij);
+    ok('T gelijk aan het model geeft geen signaal', !f1.some(f => f.veld === 'Tjaar'), JSON.stringify(f1));
+    let p2 = { Tjaar: model * 12 + 5, onderbouwingT: 'Valt mee.' }; let f2 = keur(p2, rij);
+    ok('T die sterk afwijkt zonder reden wordt gesignaleerd', f2.some(f => f.veld === 'Tjaar' && f.signaal), JSON.stringify(f2.map(f => f.veld + ':' + (f.signaal ? 'signaal' : 'geweigerd'))));
+    ok('een gesignaleerde T blijft wel staan', p2.Tjaar != null, String(p2.Tjaar));
+    let p3 = { Tjaar: model * 12 + 5, onderbouwingT: 'De dakbedekking is vijf jaar geleden vervangen; de resterende levensduur is daarmee aanzienlijk langer dan de categorie suggereert, gemeten bij inspectie.' };
+    let f3 = keur(p3, rij);
+    ok('met een technische reden in de onderbouwing volgt geen signaal', !f3.some(f => f.veld === 'Tjaar'), JSON.stringify(f3.map(f => f.veld)));
+  }
+
   // ---------- conditieprognose ----------
   C.state.maatregelen = [{ id: 'cp1', regelId: C.calc.rows[0].id, handeling: 'Vervangen gevelbeplating', jaar: start + 5, kosten: 1000, cyclus: null, tot: null }];
   C.recompute();
