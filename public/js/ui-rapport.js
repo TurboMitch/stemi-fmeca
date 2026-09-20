@@ -292,11 +292,11 @@ function render() {
   $('#rapPrint').onclick = () => { const w = fr.contentWindow; w.focus(); w.print(); };
   $('#rapWord').onclick = () => download(bestandsnaam('doc'), rapportHtml({ ...O, word: true }), 'application/msword');
   $('#rapHtml').onclick = () => download(bestandsnaam('html'), doc(), 'text/html');
-  $('#hsSave').onclick = () => { K.bedrijf = $('#hsBedrijf').value; K.kleur = $('#hsKleur').value; K.voettekst = $('#hsVoet').value; C.saveCfg(); C.toast('Huisstijl opgeslagen'); render(); };
+  $('#hsSave').onclick = () => { K.bedrijf = $('#hsBedrijf').value; K.kleur = $('#hsKleur').value; K.voettekst = $('#hsVoet').value; C.saveCfg(true); C.toast('Huisstijl opgeslagen'); render(); };
   $('#hsLogo').onchange = e => { const f = e.target.files[0]; if (!f) return;
     if (f.size > 300000) { alert('Het logo is groter dan 300 kB; gebruik een kleinere afbeelding.'); return; }
-    const rd = new FileReader(); rd.onload = () => { K.logo = rd.result; C.saveCfg(); render(); }; rd.readAsDataURL(f); };
-  const dl = $('#hsLogoDel'); if (dl) dl.onclick = () => { K.logo = ''; C.saveCfg(); render(); };
+    const rd = new FileReader(); rd.onload = () => { K.logo = rd.result; C.saveCfg(true); render(); }; rd.readAsDataURL(f); };
+  const dl = $('#hsLogoDel'); if (dl) dl.onclick = () => { K.logo = ''; C.saveCfg(true); render(); };
 }
 window.STEMI_UI = window.STEMI_UI || {}; Object.assign(window.STEMI_UI, { renderRapport: render, rapportHtml });
 })();

@@ -93,7 +93,18 @@ function kpiVan() {
 function save() { try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch{} if (window.STEMI_DB) window.STEMI_DB.persist(state, kpiVan()); }
 /** AI-voorstel vastleggen: in het geheugen én in de eigen tabel (niet in de projectstate) */
 function setAi(id, data) { state.ai[id] = data; if (window.STEMI_DB) window.STEMI_DB.zetAi(+id, data); }
-function saveCfg() { try { localStorage.setItem(LS_CFG, JSON.stringify(cfg)); } catch{} if (window.STEMI_DB) window.STEMI_DB.setShared(cfg).catch(e=>console.warn(e)); }
+/* Wat hoort bij de organisatie (en dus in de database) en wat is een persoonlijke weergavevoorkeur?
+   Dat stond door elkaar: elke gebruiker schreef zijn eigen voorkeuren naar één gedeelde rij en
+   overschreef daarmee die van de anderen. Alleen deze sleutels zijn gedeeld; de rest blijft lokaal. */
+const CFG_GEDEELD = ['model', 'models', 'context', 'huisstijl', 'autoAI'];
+/** @param {boolean} [ookGedeeld] alleen expliciete acties (opslaan in Instellingen, huisstijl) delen */
+function saveCfg(ookGedeeld = false) {
+  try { localStorage.setItem(LS_CFG, JSON.stringify(cfg)); } catch {}
+  if (ookGedeeld && window.STEMI_DB) {
+    const deel = { apiKey: cfg.apiKey }; CFG_GEDEELD.forEach(k => { if (cfg[k] !== undefined) deel[k] = cfg[k]; });
+    window.STEMI_DB.setShared(deel).catch(e => console.warn('gedeelde instellingen', e));
+  }
+}
 function audit(entry) { const e = {ts:new Date().toISOString(), user: window.STEMI_DB?.profile?.username, ...entry}; state.audit.unshift(e); if (state.audit.length>100) state.audit.length=100; /* volledige trail staat in audit_log */ if (window.STEMI_DB) window.STEMI_DB.logAudit(e); }
 function getSp(id) { let sp = state.specialist.find(x=>x.id===id); if(!sp){ sp={id,effect:[],prov:{}}; state.specialist.push(sp);} sp.prov = sp.prov||{}; return sp; }
 /** zet een specialistveld met herkomst; logt in audit */
@@ -617,7 +628,9 @@ function startFoutafhandeling() {
   window.addEventListener('error', e => { if (e.message) log('browser', e.message, { soort: 'error', bestand: e.filename, regel: e.lineno, kolom: e.colno, stack: e.error?.stack?.slice(0, 1500) }); });
   window.addEventListener('unhandledrejection', e => { const r = e.reason; log('browser', (r?.message || String(r)).slice(0, 500), { soort: 'unhandledrejection', stack: r?.stack?.slice(0, 1500) }); });
 }
-function applySharedCfg(v) { if (!v) return; const { apiKey, ...rest } = v; cfg = Object.assign(cfg, rest); if (apiKey) cfg.apiKey = apiKey; /* lege gedeelde sleutel mag een lokaal ingevulde sleutel niet wissen */ }
+function applySharedCfg(v) { if (!v) return; const { apiKey, sleutelBeheerdersOnly, ...rest } = v;
+  CFG_GEDEELD.forEach(k => { if (rest[k] !== undefined) cfg[k] = rest[k]; });   // alleen organisatie-instellingen overnemen
+  if (apiKey) cfg.apiKey = apiKey; /* lege gedeelde sleutel mag een lokaal ingevulde sleutel niet wissen */ }
 // ---------- klantsjabloon: alles wat je voor een nieuwe klant wilt hergebruiken in één bestand ----------
 /** instellingenprofiel + import- en koppelprofielen + T-regels + huisstijl + AI-context, zonder projectdata */
 function sjabloonVan(naam) {
@@ -638,7 +651,7 @@ function pasSjabloonToe(obj, opts = {}) {
   if (opts.huisstijl !== false && obj.huisstijl && Object.keys(obj.huisstijl).length) cfg.huisstijl = clone(obj.huisstijl);
   if (opts.ai !== false) { if (obj.aiContext) cfg.context = obj.aiContext; if (obj.modellen && Object.keys(obj.modellen).length) cfg.models = clone(obj.modellen); }
   audit({ veld: 'klantsjabloon', nieuw: obj.naam, bron: 'mens', opmerking: `sjabloon van ${obj.gemaakt?.slice(0, 10) || '?'} toegepast` });
-  save(); if (opts.huisstijl !== false || opts.ai !== false) saveCfg();
+  save(); if (opts.huisstijl !== false || opts.ai !== false) saveCfg(true);   // sjabloon zet organisatie-instellingen: die horen gedeeld te worden
   return sjabloonVan(obj.naam);
 }
 
@@ -647,7 +660,7 @@ function resetState() { state = emptyState(); if (window.STEMI_DB) window.STEMI_
 return { ASP, ASP_SHORT, ONTWIKKELING, INTENSITEIT, ERNST, INSPECTEERBAAR, PRIOS, MODELS, SP_NUM, SP_FIELDS, syncAspects, addAspect, removeAspect, oKlasse, dKlasse,
   $, $$, esc, num, eur, pct, pct1, pill, uid, toast, clone, defaultRules, defaultSettings,
   get seed(){return seed}, get lib(){return lib}, get libByCode(){return libByCode}, get state(){return state}, set state(v){state=v}, get cfg(){return cfg}, get calc(){return calc},
-  save, saveCfg, audit, kpiVan, setAi, sjabloonVan, pasSjabloonToe, getSp, setSp, belangen, libEntry, systeemvoorstelO, voorstelD, voorstelDtekst, voorstelT, tJaarVanKlasse, OKANS, DTEKST,
+  save, saveCfg, CFG_GEDEELD, audit, kpiVan, setAi, sjabloonVan, pasSjabloonToe, getSp, setSp, belangen, libEntry, systeemvoorstelO, voorstelD, voorstelDtekst, voorstelT, tJaarVanKlasse, OKANS, DTEKST,
   maatregelenVan, expandCyclus, recompute, prioVan, vergelijkVoorstel, vatEvaluatieSamen, WEERGAVEN, FIN_DEFAULT, inflatieVan, indexFactor, btwFactor, npvFactor, bedrag, weergaveDefault, budgetPlan, pasBudgetToe,
   bepaalT, tKlasseVanJaar, curveFactor, restjarenVan, herstelEffect, conditiePrognose, evalueerScenario, pasScenarioToe, SCENARIO_STRATEGIE, startFoutafhandeling, callAgent, modelFor, parseJSON, loadData, resetState, emptyState, setState, applySharedCfg, migrateV1 };
 })();
