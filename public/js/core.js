@@ -266,6 +266,12 @@ function setState(st) {
   migrateSettings(state.settings); syncAspects();
   state.maatregelen = state.maatregelen || []; state.audit = state.audit || []; state.ai = state.ai || {}; state.besluiten = state.besluiten || []; state.specialist = state.specialist || [];
 }
+/** Globale foutafhandeling: onverwachte fouten en afgewezen promises worden vastgelegd. */
+function startFoutafhandeling() {
+  const log = (bron, melding, details) => { try { window.STEMI_DB?.logFout(bron, melding, { soort: details?.soort, details }); } catch {} };
+  window.addEventListener('error', e => { if (e.message) log('browser', e.message, { soort: 'error', bestand: e.filename, regel: e.lineno, kolom: e.colno, stack: e.error?.stack?.slice(0, 1500) }); });
+  window.addEventListener('unhandledrejection', e => { const r = e.reason; log('browser', (r?.message || String(r)).slice(0, 500), { soort: 'unhandledrejection', stack: r?.stack?.slice(0, 1500) }); });
+}
 function applySharedCfg(v) { if (!v) return; const { apiKey, ...rest } = v; cfg = Object.assign(cfg, rest); if (apiKey) cfg.apiKey = apiKey; /* lege gedeelde sleutel mag een lokaal ingevulde sleutel niet wissen */ }
 function resetState() { state = emptyState(); save(); }
 
@@ -273,5 +279,5 @@ return { ASP, ASP_SHORT, ONTWIKKELING, INTENSITEIT, ERNST, INSPECTEERBAAR, PRIOS
   $, $$, esc, num, eur, pct, pill, uid, toast, clone, defaultRules, defaultSettings,
   get seed(){return seed}, get lib(){return lib}, get libByCode(){return libByCode}, get state(){return state}, set state(v){state=v}, get cfg(){return cfg}, get calc(){return calc},
   save, saveCfg, audit, getSp, setSp, belangen, libEntry, systeemvoorstelO, voorstelD, voorstelDtekst, voorstelT, tJaarVanKlasse, OKANS, DTEKST,
-  maatregelenVan, expandCyclus, recompute, callAgent, modelFor, parseJSON, loadData, resetState, emptyState, setState, applySharedCfg, migrateV1 };
+  maatregelenVan, expandCyclus, recompute, startFoutafhandeling, callAgent, modelFor, parseJSON, loadData, resetState, emptyState, setState, applySharedCfg, migrateV1 };
 })();

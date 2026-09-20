@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  controle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Syntax van alle JavaScript
+        run: |
+          set -e
+          for f in public/js/*.js api/*.js tests/*.js; do
+            node --check "$f" || { echo "::error file=$f::syntaxfout"; exit 1; }
+          done
+          echo "alle JS-bestanden syntactisch in orde"
+
+      - name: JSON-bestanden geldig
+        run: |
+          set -e
+          for f in package.json vercel.json public/data/seed.json tests/package.json; do
+            node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))" || { echo "::error file=$f::ongeldige JSON"; exit 1; }
+          done
+          echo "alle JSON-bestanden geldig"
+
+      - name: Modules staan in de loader
+        run: |
+          node -e "
+          const fs=require('fs');
+          const html=fs.readFileSync('public/index.html','utf8');
+          const m=html.match(/const files = \[([^\]]+)\]/);
+          if(!m) { console.error('loaderlijst niet gevonden in index.html'); process.exit(1); }
+          const inLoader=m[1].split(',').map(s=>s.trim().replace(/['\"]/g,''));
+          const opSchijf=fs.readdirSync('public/js').filter(f=>f.endsWith('.js')).map(f=>f.replace(/\.js$/,''));
+          const vergeten=opSchijf.filter(f=>!inLoader.includes(f));
+          const spook=inLoader.filter(f=>!opSchijf.includes(f));
+          if(vergeten.length||spook.length){ console.error('loader klopt niet. Niet geladen:',vergeten,'| Bestaat niet:',spook); process.exit(1); }
+          console.log('loader compleet:',inLoader.join(', '));
+          "
+
+      - name: Unit-tests (rekenkern, voorbewerking, validatie)
+        run: node tests/unit.js
+
+      - name: Geen sleutels in de code
+        run: |
+          set -e
+          if grep -rInE "sk-or-v1-[A-Za-z0-9]|sk-ant-[A-Za-z0-9]|ghp_[A-Za-z0-9]{20}" --include="*.js" --include="*.json" --include="*.html" . ; then
+            echo "::error::mogelijke API-sleutel in de code gevonden"; exit 1
+          fi
+          echo "geen sleutels aangetroffen"

@@ -40,7 +40,7 @@ async function flush(state) {
     if (cur && cur.versie !== dossier.versie && cur.updated_by !== user.id) { setStatus('conflict – herladen'); saving = false; if (confirm('Dit dossier is intussen door een andere gebruiker gewijzigd. Herladen met hun versie? (Annuleren = jouw versie opslaan en hun wijzigingen overschrijven)')) { location.reload(); return; } }
     const { data, error } = await sb.from('dossiers').update({ state, meta: metaVan(state), updated_by: user.id }).eq('id', dossier.id).select('versie,updated_at').single();
     if (error) throw error; dossier.versie = data.versie; dossier.updated_at = data.updated_at; dirty = false; setStatus('opgeslagen ' + new Date().toLocaleTimeString('nl-NL'));
-  } catch (e) { console.error(e); setStatus('opslaan mislukt: ' + e.message, true); }
+  } catch (e) { console.error(e); setStatus('opslaan mislukt: ' + e.message, true); logFout('opslaan', e.message, { soort: 'persist', details: { dossier: dossier?.naam, versie: dossier?.versie } }); }
   saving = false;
 }
 function setStatus(t, warn=false) { const el = $('#dbStatus'); if (el) { el.textContent = t; el.classList.toggle('warn', warn); } }
@@ -48,6 +48,21 @@ function setStatus(t, warn=false) { const el = $('#dbStatus'); if (el) { el.text
 // ---------- audit & AI-runs ----------
 async function logAudit(entry) { if (!dossier || !user) return; try { await sb.from('audit_log').insert({ dossier_id: dossier.id, user_id: user.id, username: profile?.username, ts: entry.ts, regel: entry.regel ?? null, veld: entry.veld ?? null, oud: entry.oud === undefined ? null : entry.oud, nieuw: entry.nieuw === undefined ? null : entry.nieuw, bron: entry.bron ?? null, model: entry.model ?? null, opmerking: entry.opmerking ?? null }); } catch (e) { console.warn('audit', e); } }
 async function logAiRun(run) { if (!dossier || !user) return; try { const { error } = await sb.from('ai_runs').insert({ dossier_id: dossier.id, user_id: user.id, regel: run.regel ?? null, taak: run.taak || 'specialist', model: run.model || null, input: run.input ?? null, output: run.output ?? null, usage: run.usage ?? null }); if (error) console.warn('ai_run', error); } catch (e) { console.warn('ai_run', e); } }
+async function backupsVan(dossierId) { const { data, error } = await sb.from('dossier_backups').select('id,naam,versie,reden,gemaakt_op').eq('dossier_id', dossierId).order('gemaakt_op', { ascending: false }).limit(20); if (error) throw error; return data || []; }
+async function herstelDossier(dossierId, backupId) { const { data, error } = await sb.rpc('herstel_dossier', { p_dossier: dossierId, p_backup: backupId || null }); if (error) throw error; return data; }
+/** Legt een fout vast in app_errors (stil: als loggen zelf faalt, gebeurt er niets extra). */
+async function logFout(bron, melding, extra = {}) {
+  try {
+    await sb.from('app_errors').insert({
+      user_id: user?.id || null, username: profile?.username || null,
+      dossier_id: dossier?.id || null, dossier_naam: dossier?.naam || null,
+      bron, soort: extra.soort || null, melding: String(melding).slice(0, 2000),
+      details: extra.details ?? null, url: location.pathname + location.hash, app_versie: window.STEMI_VERSIE || null
+    });
+  } catch (e) { console.warn('fout loggen mislukt', e); }
+}
+async function foutSamenvatting() { const { data, error } = await sb.rpc('fout_samenvatting'); if (error) throw error; return data || []; }
+async function laatsteFouten(limit = 25) { const { data, error } = await sb.from('app_errors').select('*').order('ts', { ascending: false }).limit(limit); if (error) throw error; return data || []; }
 async function aiRunsVan(regel) { const { data, error } = await sb.from('ai_runs').select('*').eq('dossier_id', dossier.id).eq('regel', regel).order('ts', { ascending: false }).limit(3); if (error) throw error; return data || []; }
 async function auditFromDb(limit=500) { const { data } = await sb.from('audit_log').select('*').eq('dossier_id', dossier.id).order('ts', { ascending: false }).limit(limit); return data || []; }
 
@@ -73,5 +88,5 @@ function showLogin(onDone) {
   const form = $('#loginForm'); form.onsubmit = async e => { e.preventDefault(); const st = $('#loginStatus'); st.innerHTML = '<span class="spin"></span>inloggen…'; try { await login($('#loginUser').value, $('#loginPass').value); ov.classList.add('hidden'); onDone(); } catch (err) { st.innerHTML = `<span class="warn">${err.message}</span>`; } };
   setTimeout(() => $('#loginUser').focus(), 50);
 }
-return { sb, init, login, logout, token, get user(){return user}, get profile(){return profile}, get dossier(){return dossier}, listDossiers, openDossier, createDossier, renameDossier, duplicateDossier, deleteDossier, metaVan, persist, flush, logAudit, logAiRun, aiRunsVan, auditFromDb, getSetting, setSetting, getShared, setShared, get isAdmin(){return isAdmin()}, showLogin, setStatus };
+return { sb, init, login, logout, token, get user(){return user}, get profile(){return profile}, get dossier(){return dossier}, listDossiers, openDossier, createDossier, renameDossier, duplicateDossier, deleteDossier, metaVan, backupsVan, herstelDossier, persist, flush, logAudit, logAiRun, logFout, foutSamenvatting, laatsteFouten, aiRunsVan, auditFromDb, getSetting, setSetting, getShared, setShared, get isAdmin(){return isAdmin()}, showLogin, setStatus };
 })();

@@ -69,6 +69,7 @@ async function analyzeRow(id, extra='') {
   } catch (e) {
     setRowStatus(id, 'fout', e.message);
     if (window.STEMI_DB) window.STEMI_DB.logAiRun({ regel:id, taak:'specialist', model:C.modelFor('specialist'), input:{ context: ctx, extra }, output:{ error: e.message } });
+    if (window.STEMI_DB) window.STEMI_DB.logFout('ai', e.message, { soort: 'ai_run', details: { regel: id, model: C.modelFor('specialist') } });
     throw e;
   }
 }

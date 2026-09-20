@@ -75,7 +75,8 @@ function render() {
       <div class="field"><label>Adres</label><input id="cpAdres" value="${esc(P.adres || '')}"></div>
       <div class="field"><label>Omschrijving</label><textarea id="cpOms" rows="2">${esc(P.omschrijving || '')}</textarea></div>
       <p class="note">${C.state.inspectie.length} inspectieregels · ${Object.keys(C.state.ai || {}).length} door AI beoordeeld · instellingenprofiel “${esc(C.state.settings.naam || '')}” · versie ${cur?.versie ?? 0} · laatst gewijzigd ${fmtDate(cur?.updated_at)}</p>
-      <button class="btn" id="cpSave">Opslaan</button> <button class="btn ghost" id="cpDup">Dupliceren…</button> <button class="btn ghost" id="cpDel">Project verwijderen</button>
+      <button class="btn" id="cpSave">Opslaan</button> <button class="btn ghost" id="cpDup">Dupliceren…</button> <button class="btn ghost" id="cpBack">Back-ups…</button> <button class="btn ghost" id="cpDel">Project verwijderen</button>
+      <div id="cpBackups"></div>
     </div>
   </div>
   <div class="card" style="margin-top:14px">
@@ -88,6 +89,21 @@ function render() {
   $('#npGo').onclick = () => createProject({ naam: $('#npNaam').value, klant: $('#npKlant').value, object: $('#npObject').value, adres: $('#npAdres').value, omschrijving: $('#npOms').value, basis: basisSel.value, bron: $('#npBron')?.value }).catch(e => C.toast('Aanmaken mislukt: ' + e.message, 6000));
   $('#cpSave').onclick = async () => { const n = $('#cpNaam').value.trim(); if (n && n !== cur.naam) await DB.renameDossier(n); C.state.project = { ...(C.state.project || {}), klant: $('#cpKlant').value.trim(), object: $('#cpObject').value.trim(), adres: $('#cpAdres').value.trim(), status: $('#cpStatus').value, omschrijving: $('#cpOms').value.trim() }; C.audit({ veld: 'project', nieuw: 'projectgegevens gewijzigd', bron: 'mens' }); C.save(); await DB.flush(C.state); await refresh(); U().renderAll(); C.toast('Projectgegevens opgeslagen'); };
   $('#cpDel').onclick = () => delProject(cur.id, cur.naam);
+  $('#cpBack').onclick = async () => {
+    const box = $('#cpBackups'); box.innerHTML = '<p class="note">back-ups ophalen…</p>';
+    try {
+      const bs = await DB.backupsVan(cur.id);
+      box.innerHTML = bs.length ? `<p class="note" style="margin-top:8px">Elke nacht wordt automatisch een back-up gemaakt zodra er iets gewijzigd is; ze worden 30 dagen bewaard. Herstellen maakt eerst een back-up van de huidige toestand, dus je kunt het altijd terugdraaien.</p>
+        <table class="mini"><tbody>${bs.map(b=>`<tr><td class="note">${fmtDate(b.gemaakt_op)}</td><td>v${b.versie}</td><td class="note">${esc(b.reden||'')}</td><td><button class="btn ghost small" data-herstel="${b.id}">Herstellen</button></td></tr>`).join('')}</tbody></table>`
+        : '<p class="note">Nog geen back-ups van dit project.</p>';
+      $$('[data-herstel]', box).forEach(b => b.onclick = async () => {
+        if (!confirm('Dit project terugzetten naar deze back-up? De huidige toestand wordt eerst als back-up bewaard.')) return;
+        b.disabled = true; b.textContent = 'herstellen…';
+        try { const melding = await DB.herstelDossier(cur.id, b.dataset.herstel); const d = await DB.openDossier(cur.id); C.setState(d.state); await refresh(); U().renderAll(); C.toast(melding, 9000); }
+        catch (e) { C.toast('Herstel mislukt: ' + e.message, 8000); b.disabled = false; b.textContent = 'Herstellen'; }
+      });
+    } catch (e) { box.innerHTML = `<p class="note warn">${esc(e.message)}</p>`; }
+  };
   $('#cpDup').onclick = () => dupProject(cur.id, cur.naam);
   $$('[data-open]', el).forEach(b => b.onclick = () => openProject(b.dataset.open));
   $$('[data-dup]', el).forEach(b => b.onclick = () => { const x = cache.find(c => c.id === b.dataset.dup); dupProject(x.id, x.naam); });

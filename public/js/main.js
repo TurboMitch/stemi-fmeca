@@ -27,6 +27,7 @@ async function start() {
   window.addEventListener('beforeunload', () => { if (DB.dossier) DB.flush(C.state); });
 }
 async function init() {
+  C.startFoutafhandeling();
   await C.loadData();
   $$('#tabs button').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
   $('#drawerClose').onclick = () => $('#drawer').classList.add('hidden');

@@ -64,6 +64,24 @@ async function fetchModels() {
   try { const tok = await window.STEMI_DB.token(); const r = await fetch('/api/models', { headers: { ...(C.cfg.apiKey?{'x-openrouter-key':C.cfg.apiKey}:{}), Authorization: 'Bearer '+tok } }); const d = await r.json(); if (!r.ok) throw new Error(d.error||r.status); window._models = d.models; renderInstellingen(); }
   catch (e) { out.innerHTML = `<span class="warn">${esc(e.message)}</span>`; }
 }
+let gezondheid = null;
+function gezondheidHtml() {
+  if (!gezondheid || gezondheid.bezig) return '<p class="note">Gezondheid wordt opgehaald…</p>';
+  if (gezondheid.fout) return `<p class="note warn">Gezondheidsoverzicht niet op te halen: ${esc(gezondheid.fout)}</p>`;
+  const s = gezondheid.samenvatting || [];
+  const totaal = s.reduce((a, x) => a + Number(x.aantal), 0);
+  return `<details class="card ${totaal?'blok':''}" style="margin:10px 0">
+    <summary><b>Gezondheid</b> <span class="${totaal?'warn':'note'}">– ${totaal ? `${totaal} fout(en) in de afgelopen 7 dagen` : 'geen fouten in de afgelopen 7 dagen'}</span></summary>
+    ${s.length ? `<table class="mini" style="margin-top:6px"><thead><tr><th>Waar</th><th>Soort</th><th class="num">Aantal</th><th>Laatste</th><th>Melding</th></tr></thead><tbody>
+      ${s.map(x=>`<tr><td>${esc(x.bron)}</td><td>${esc(x.soort||'')}</td><td class="num">${x.aantal}</td><td class="note">${new Date(x.laatste).toLocaleString('nl-NL')}</td><td class="note">${esc((x.voorbeeld||'').slice(0,120))}</td></tr>`).join('')}
+    </tbody></table><div class="toolbar"><button class="btn ghost small" id="gzDetail">Laatste 25 fouten</button></div><div id="gzLijst"></div>` : '<p class="note">De app legt browserfouten, mislukte opslagacties en mislukte AI-runs vast in de database. Er is de afgelopen week niets vastgelegd.</p>'}
+  </details>`;
+}
+async function haalGezondheid() {
+  try { gezondheid = { samenvatting: await window.STEMI_DB.foutSamenvatting() }; }
+  catch (e) { gezondheid = { fout: e.message }; }
+  renderInstellingen();
+}
 let apiStatus = null;
 function sleutelStatusHtml() {
   if (!apiStatus || apiStatus.bezig) return '<p class="note">AI-status wordt opgehaald…</p>';
@@ -80,13 +98,14 @@ async function haalApiStatus() {
 }
 function renderInstellingen() {
   if (!apiStatus) { apiStatus = { fout: null, bezig: true }; haalApiStatus(); }
+  if (!gezondheid) { gezondheid = { bezig: true }; haalGezondheid(); }
   const S = C.state.settings, ov = S.libOverrides || {};
   const q = libQ.trim().toLowerCase(); const hits = q ? C.lib.filter(e => (e.code+' '+e.bouwdeel+' '+e.omschrijving+' '+e.faalwijze).toLowerCase().includes(q)).slice(0,60) : C.lib.filter(e=>ov[e.code]).slice(0,60);
   $('#tab-instellingen').innerHTML = `
     <h2>Instellingen</h2>
     <div class="grid two">
       <div class="card"><h3 style="margin-top:0">OpenRouter-agents</h3>
-        ${sleutelStatusHtml()}${window.STEMI_DB?.isAdmin ? `<div class="field"><label>OpenRouter API-sleutel <span class="note">(alleen beheerders; veiliger is de env-var <b>OPENROUTER_API_KEY</b> op Vercel — dan hoeft de sleutel niet via de browser)</span></label><input type="password" id="cfgKey" value="${esc(C.cfg.apiKey||'')}" placeholder="sk-or-v1-…"></div>` : `<p class="note">De API-sleutel wordt beheerd door een beheerder of staat als env-var op de server; je kunt de AI gewoon gebruiken.</p>`}
+        ${sleutelStatusHtml()}${gezondheidHtml()}${window.STEMI_DB?.isAdmin ? `<div class="field"><label>OpenRouter API-sleutel <span class="note">(alleen beheerders; veiliger is de env-var <b>OPENROUTER_API_KEY</b> op Vercel — dan hoeft de sleutel niet via de browser)</span></label><input type="password" id="cfgKey" value="${esc(C.cfg.apiKey||'')}" placeholder="sk-or-v1-…"></div>` : `<p class="note">De API-sleutel wordt beheerd door een beheerder of staat als env-var op de server; je kunt de AI gewoon gebruiken.</p>`}
         <div class="toolbar"><button class="btn ghost" id="cfgModels">Alle modellen ophalen van OpenRouter</button><input id="modelQ" placeholder="filter (bijv. claude, gpt, gemini, free)" style="min-width:220px"><span id="cfgModelsOut" class="note">${window._models?`${window._models.length} modellen geladen`:'nog niet opgehaald'}</span></div>
         ${[['specialist','Agent tab 03 – analyse & verificatie per regel (zwaarste taak)'],['mapping','Agent kolommapping bij data-import'],['chat','Agent vragen/chat over de dataset']].map(([t,l])=>`<div class="field"><label>${l}</label><select data-model="${t}">${modelOptions(C.cfg.models?.[t]||C.cfg.model)}</select></div>`).join('')}
         <div class="field"><label>Standaardmodel (fallback)</label><select data-model="_default">${modelOptions(C.cfg.model)}</select></div>
@@ -106,6 +125,9 @@ function renderInstellingen() {
     <div class="tablewrap"><table><thead><tr><th>Code</th><th>Bouwdeel</th><th>Klasse</th><th class="wrap">Omschrijving</th><th class="wrap">Faalwijze (voorstel)</th>${ASP_SHORT.map(a=>`<th>${a}</th>`).join('')}<th>Vertr.</th><th></th></tr></thead><tbody>
     ${hits.map(e => { const o = ov[e.code]; const eff = o?.effect || e.effect; return `<tr class="${o?'ovr':''}"><td>${e.code}</td><td>${esc(e.bouwdeel)}</td><td>${esc(e.ernst)}</td><td class="wrap">${esc(e.omschrijving)}</td><td class="wrap"><textarea data-libf="${e.code}">${esc(o?.faalwijze||e.faalwijze)}</textarea></td>${eff.map((v,i)=>`<td><input class="n" data-libe="${e.code}" data-i="${i}" value="${v}"></td>`).join('')}<td>${esc(e.vertrouwen)}</td><td>${o?`<button class="btn ghost small" data-libreset="${e.code}">reset</button>`:''}</td></tr>`; }).join('')}
     </tbody></table></div>`;
+  const gz = $('#gzDetail'); if (gz) gz.onclick = async () => { gz.disabled = true; try { const rows = await window.STEMI_DB.laatsteFouten(25);
+    $('#gzLijst').innerHTML = `<div class="tablewrap" style="margin-top:8px"><table><thead><tr><th>Tijd</th><th>Gebruiker</th><th>Project</th><th>Waar</th><th class="wrap">Melding</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="note">${new Date(r.ts).toLocaleString('nl-NL')}</td><td class="note">${esc(r.username||'')}</td><td class="note">${esc(r.dossier_naam||'')}</td><td>${esc(r.bron)}${r.soort?` · ${esc(r.soort)}`:''}</td><td class="wrap note">${esc((r.melding||'').slice(0,300))}</td></tr>`).join('')}</tbody></table></div>`;
+  } catch (e) { $('#gzLijst').innerHTML = `<p class="note warn">${esc(e.message)}</p>`; } gz.disabled = false; };
   $('#cfgSave').onclick = () => { const kf=$('#cfgKey'); if (kf) C.cfg.apiKey=kf.value.trim(); C.cfg.models = C.cfg.models||{}; $$('[data-model]').forEach(s=>{ if (s.dataset.model==='_default') C.cfg.model = s.value; else C.cfg.models[s.dataset.model] = s.value; }); C.cfg.context=$('#cfgCtx').value; C.cfg.autoAI=$('#cfgAuto').checked; C.saveCfg(); C.toast('Opgeslagen en gedeeld'); window.STEMI_UI.renderAll('specialist'); };
   $('#cfgModels').onclick = fetchModels;
   $('#modelQ').value = modelQ; $('#modelQ').oninput = e => { modelQ = e.target.value; clearTimeout(window._mq); window._mq = setTimeout(() => { $$('[data-model]').forEach(s => { const cur = s.value; s.innerHTML = modelOptions(cur); }); }, 200); };
