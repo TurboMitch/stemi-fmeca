@@ -6,7 +6,10 @@ const ok = (naam, cond, extra='') => { if (!cond) mislukt++; console.log(`${cond
   const b = await chromium.launch(); const pg = await b.newPage({viewport:{width:1600,height:1000}});
   pg.on('pageerror', e => console.log('PAGEERROR', e.message)); pg.on('dialog', d => d.accept());
   await pg.goto('http://localhost:8123/');
-  await pg.fill('#loginUser','mitchell'); await pg.fill('#loginPass','Zandwijken1!'); await pg.click('#loginForm button[type=submit]');
+  // inloggegevens komen uit de omgeving, niet uit de code: STEMI_USER=… STEMI_PASS=… node tests/regressie.js
+  const gebruiker = process.env.STEMI_USER, wachtwoord = process.env.STEMI_PASS;
+  if (!gebruiker || !wachtwoord) { console.error('Zet eerst STEMI_USER en STEMI_PASS in de omgeving.'); process.exit(2); }
+  await pg.fill('#loginUser', gebruiker); await pg.fill('#loginPass', wachtwoord); await pg.click('#loginForm button[type=submit]');
   await pg.waitForSelector('#projSel', {timeout:30000}); await pg.waitForTimeout(1200);
   ok('app laadt en projectkiezer verschijnt', true);
 

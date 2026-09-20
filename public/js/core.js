@@ -11,6 +11,9 @@ const PRIOS = ['P1','P2','P3','P4','P5'];
 const MODELS = ['anthropic/claude-sonnet-4.5','anthropic/claude-opus-4.1','openai/gpt-4.1','openai/gpt-5','google/gemini-2.5-pro','deepseek/deepseek-chat-v3.1','mistralai/mistral-large'];
 const LS_KEY = 'stemi_fmeca_state_v2', LS_KEY_V1 = 'stemi_fmeca_state_v1', LS_CFG = 'stemi_fmeca_cfg_v1';
 const SP_NUM = ['O','D','Tjaar','restS','restO','restD','kostenSpecialist'];
+/* financiele standaardparameters: worden via migrateSettings ook aan bestaande projecten toegevoegd */
+const FIN_DEFAULT = { prijspeil: 2026, inflatie: 0.03, inflatiePerJaar: {}, btwPercentage: 21, btwWeergave: 'excl', discontovoet: 0.025, budgetplafond: null, budgetplafondPerJaar: {} };
+const WEERGAVEN = [['prijspeil','Prijspeil (excl. btw)'],['index','Geindexeerd naar uitvoeringsjaar'],['btw','Geindexeerd incl. btw'],['npv','Contante waarde (NPV)']];
 const SP_FIELDS = ['faalwijze','O','onderbouwingO','D','onderbouwingD','Tklasse','Tjaar','onderbouwingT','effect','onderbouwingEffect','maatregel','restS','restO','restD','restToelichting','kostenSpecialist','onderbouwingKosten','scopeOverride','onderbouwingScope','aanvullendOnderzoek'];
 
 // ---------- helpers ----------
@@ -20,6 +23,8 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;
 const num = v => (v === '' || v === null || v === undefined || isNaN(+v)) ? null : +v;
 const eur = v => v == null ? '' : new Intl.NumberFormat('nl-NL',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(v);
 const pct = v => v == null ? '' : Math.round(v*100) + '%';
+/** percentage met een decimaal: 0,025 → 2,5% (inflatie en discontovoet zijn te fijn voor hele procenten) */
+const pct1 = v => v == null || v === '' || isNaN(+v) ? '' : (Math.round(v*1000)/10).toString().replace('.',',') + '%';
 const pill = p => p ? `<span class="pill ${p}">${p}</span>` : '';
 const uid = () => Math.random().toString(36).slice(2,9);
 const toast = (m, ms=2500) => { const t=$('#toast'); if(!t) return; t.textContent=m; t.classList.remove('hidden'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.add('hidden'),ms); };
@@ -126,6 +131,79 @@ function expandCyclus(m, jaren) {
   return out;
 }
 
+// ---------- indexering, btw en contante waarde ----------
+/** inflatievoet voor een jaar: een eigen waarde per jaar gaat voor de algemene voet */
+function inflatieVan(j) { const o = state.settings.params.inflatiePerJaar?.[j]; const v = num(o); return v == null ? (num(state.settings.params.inflatie) ?? 0) : v; }
+/** indexfactor van prijspeil naar uitvoeringsjaar; samengesteld, per jaar de dan geldende voet */
+function indexFactor(jaar) {
+  const P = state.settings.params, pp = num(P.prijspeil) ?? num(P.startjaar) ?? 2026;
+  if (jaar == null) return 1; let f = 1;
+  if (jaar >= pp) { for (let j = pp + 1; j <= jaar; j++) f *= 1 + inflatieVan(j); }
+  else { for (let j = jaar + 1; j <= pp; j++) f /= 1 + inflatieVan(j); }
+  return f;
+}
+const btwFactor = () => 1 + (num(state.settings.params.btwPercentage) ?? 0) / 100;
+/** contantefactor: een uitgave in jaar j teruggerekend naar het startjaar tegen de discontovoet */
+function npvFactor(jaar) { const P = state.settings.params; return jaar == null ? 1 : 1 / Math.pow(1 + (num(P.discontovoet) ?? 0), jaar - (num(P.startjaar) ?? 2026)); }
+/** een bedrag op prijspeil omrekenen naar de gevraagde weergave in het uitvoeringsjaar */
+function bedrag(k, jaar, weergave) {
+  if (k == null) return null; const w = weergave || weergaveDefault(); if (w === 'prijspeil') return k;
+  const g = k * indexFactor(jaar); if (w === 'index') return g;
+  const b = g * btwFactor(); if (w === 'btw') return b;
+  if (w === 'npv') return (state.settings.params.btwWeergave === 'incl' ? b : g) * npvFactor(jaar);
+  return g;
+}
+const weergaveDefault = () => state.settings.params.btwWeergave === 'incl' ? 'btw' : 'index';
+
+/** Budgetsturing: schuift handelingen naar later tot elk jaar binnen het plafond past.
+ *  Laagste risico schuift eerst (hoogste prio-nummer, dan laagste RPN-waarde, dan hoogste bedrag).
+ *  Cyclische handelingen blijven staan: die verschuiven zou de hele cyclus verplaatsen.
+ *  Vergelijkt tegen het geindexeerde bedrag, want een plafond is een budget in het jaar zelf. */
+function budgetPlan(opts = {}) {
+  const P = state.settings.params, jaren = calc.jaren, laatste = jaren[jaren.length - 1];
+  const perJaarPlafond = opts.perJaar || P.budgetplafondPerJaar || {};
+  const algemeen = opts.plafond === undefined ? num(P.budgetplafond) : num(opts.plafond);
+  const plafondVan = j => { const o = num(perJaarPlafond[j]); const v = o == null ? algemeen : o; return v == null || v <= 0 ? null : v; };
+  const maxSchuif = opts.maxSchuif ?? 10;
+  const posten = [];
+  calc.rows.forEach(r => r.maatregelen.forEach(m => m.jaren.forEach(j => posten.push({
+    regel: r.id, element: r.insp.element, handeling: m.handeling || '', maatregelId: m.id, auto: !!m.auto,
+    cyclisch: !!(m.cyclus && m.cyclus > 0), jaar: j, origineelJaar: j, kosten: m.kosten ?? 0,
+    prio: r.prio, prioN: (PRIOS.indexOf(r.prio) + 1) || 9, rpn: r.RPNwaarde ?? 0, laatsteJaar: r.laatsteJaar, deadline: r.deadline }))));
+  const som = j => posten.reduce((s, p) => s + (p.jaar === j ? p.kosten * indexFactor(j) : 0), 0);
+  for (const j of jaren) {
+    const cap = plafondVan(j); if (cap == null) continue; let guard = 0;
+    while (som(j) > cap && guard++ < 2000) {
+      const kand = posten.filter(p => p.jaar === j && !p.cyclisch && p.jaar - p.origineelJaar < maxSchuif && p.jaar < laatste)
+        .sort((a, b) => (b.prioN - a.prioN) || (a.rpn - b.rpn) || (b.kosten - a.kosten));
+      if (!kand.length) break; kand[0].jaar = j + 1;
+    }
+  }
+  const shifts = posten.filter(p => p.jaar !== p.origineelJaar).map(p => ({ ...p,
+    voorbijLaatsteJaar: p.laatsteJaar != null && p.jaar > p.laatsteJaar,
+    voorbijDeadline: p.deadline != null && p.jaar > p.deadline }));
+  const perJaar = jaren.map(j => som(j));
+  const nietOplosbaar = jaren.map((j, i) => { const c = plafondVan(j); return c != null && perJaar[i] > c + 0.5 ? { jaar: j, bedrag: perJaar[i], plafond: c } : null; }).filter(Boolean);
+  const risico = { geschoven: shifts.length, bedrag: shifts.reduce((s, p) => s + p.kosten, 0),
+    voorbijLaatsteJaar: shifts.filter(s => s.voorbijLaatsteJaar).length, voorbijDeadline: shifts.filter(s => s.voorbijDeadline).length,
+    perPrio: PRIOS.map(p => ({ prio: p, n: shifts.filter(s => s.prio === p).length, buiten: shifts.filter(s => s.prio === p && s.voorbijLaatsteJaar).length })).filter(x => x.n),
+    nietOplosbaar };
+  return { shifts, perJaar, jaren, risico, plafondVan };
+}
+/** schuifvoorstel vastleggen in de handelingen; automatische handelingen worden eerst een eigen record */
+function pasBudgetToe(plan) {
+  let n = 0;
+  for (const s of plan.shifts) {
+    const r = calc.rows.find(x => x.id === s.regel); if (!r) continue;
+    let m = state.maatregelen.find(x => x.id === s.maatregelId);
+    if (!m) { const a = r.maatregelen.find(x => x.id === s.maatregelId) || r.maatregelen[0]; m = { id: uid(), regelId: r.id, handeling: a.handeling, jaar: a.jaar, kosten: a.kosten, cyclus: a.cyclus ?? null, tot: a.tot ?? null }; state.maatregelen.push(m); }
+    const oud = m.jaar; m.jaar = s.jaar; m.bron = 'budgetsturing';
+    audit({ regel: r.id, veld: 'mjop.jaar', oud, nieuw: s.jaar, bron: 'systeem', opmerking: `budgetsturing: geschoven van ${s.origineelJaar} naar ${s.jaar}` + (s.voorbijLaatsteJaar ? ` (voorbij laatste acceptabele jaar ${s.laatsteJaar})` : '') });
+    n++;
+  }
+  if (n) save(); return n;
+}
+
 function recompute() {
   const S = state.settings, P = S.params, R = S.rules, bel = belangen(), fac = bel.map(b => b/5);
   const start = num(P.startjaar) ?? 2026, horizon = num(P.horizon) ?? 40;
@@ -178,10 +256,22 @@ function recompute() {
     r.maatregelen = maatregelenVan(r).map(m => ({...m, jaren: expandCyclus(m, jaren)}));
     r.planJaar = r.maatregelen[0]?.jaar ?? null;
     r.kostenHorizon = r.maatregelen.reduce((s,m)=> s + (m.kosten??0)*m.jaren.length, 0);
+    r.kostenHorizonIndex = r.maatregelen.reduce((s,m)=> s + m.jaren.reduce((t,j)=> t + (m.kosten??0)*indexFactor(j), 0), 0);
     rows.push(r);
   }
   const perJaar = jaren.map(j => rows.reduce((s, r) => s + r.maatregelen.reduce((t,m)=> t + (m.jaren.includes(j) ? (m.kosten??0) : 0), 0), 0));
-  calc = { rows, bel, fac, jaren, perJaar, totaal: perJaar.reduce((a,b)=>a+b,0), start };
+  // indexering, btw en contante waarde: binnen een jaar geldt voor elk bedrag dezelfde factor
+  const idx = {}, npv = {}; jaren.forEach(j => { idx[j] = indexFactor(j); npv[j] = npvFactor(j); });
+  const btwF = btwFactor(), inclBtw = P.btwWeergave === 'incl';
+  const perJaarIndex = jaren.map((j,i) => perJaar[i] * idx[j]);
+  const perJaarBtw = perJaarIndex.map(v => v * btwF);
+  const perJaarNpv = jaren.map((j,i) => (inclBtw ? perJaarBtw[i] : perJaarIndex[i]) * npv[j]);
+  const som = a => a.reduce((x,y)=>x+y,0);
+  const series = { prijspeil: perJaar, index: perJaarIndex, btw: perJaarBtw, npv: perJaarNpv };
+  calc = { rows, bel, fac, jaren, perJaar, perJaarIndex, perJaarBtw, perJaarNpv, series, idx, npv, btwF, inclBtw,
+    serieVan: w => series[w] || perJaarIndex, weergave: weergaveDefault(),
+    totaal: som(perJaar), totaalIndex: som(perJaarIndex), totaalBtw: som(perJaarBtw), totaalNpv: som(perJaarNpv),
+    totaalVan: w => som(series[w] || perJaarIndex), start, prijspeil: num(P.prijspeil) ?? start };
   return calc;
 }
 
@@ -254,6 +344,8 @@ function removeAspect(i) {
 }
 function migrateSettings(S) {
   if (!S.aspecten) S.aspecten = clone(seed.aspecten);
+  Object.entries(FIN_DEFAULT).forEach(([k,v]) => { if (S.params[k] === undefined) S.params[k] = clone(v); });
+  if (S.params.prijspeil == null) S.params.prijspeil = S.params.startjaar;
   if (!S.rules.oVoorstel.ontwikkeling) { S.rules.oVoorstel = defaultRules().oVoorstel; S.rules.dVoorstel = defaultRules().dVoorstel; }
   if (!S.rules.safetyAspect) { S.rules.safetyAspect = 'Veiligheid'; S.rules.complianceAspect = 'Compliance'; }
   if (!S.scorekaarten.O[0].omschrijving) { S.scorekaarten.O = clone(seed.scorekaarten.O); S.scorekaarten.Odefinitie = seed.scorekaarten.Odefinitie; }
@@ -276,8 +368,8 @@ function applySharedCfg(v) { if (!v) return; const { apiKey, ...rest } = v; cfg 
 function resetState() { state = emptyState(); save(); }
 
 return { ASP, ASP_SHORT, ONTWIKKELING, INTENSITEIT, ERNST, INSPECTEERBAAR, PRIOS, MODELS, SP_NUM, SP_FIELDS, syncAspects, addAspect, removeAspect, oKlasse, dKlasse,
-  $, $$, esc, num, eur, pct, pill, uid, toast, clone, defaultRules, defaultSettings,
+  $, $$, esc, num, eur, pct, pct1, pill, uid, toast, clone, defaultRules, defaultSettings,
   get seed(){return seed}, get lib(){return lib}, get libByCode(){return libByCode}, get state(){return state}, set state(v){state=v}, get cfg(){return cfg}, get calc(){return calc},
   save, saveCfg, audit, getSp, setSp, belangen, libEntry, systeemvoorstelO, voorstelD, voorstelDtekst, voorstelT, tJaarVanKlasse, OKANS, DTEKST,
-  maatregelenVan, expandCyclus, recompute, startFoutafhandeling, callAgent, modelFor, parseJSON, loadData, resetState, emptyState, setState, applySharedCfg, migrateV1 };
+  maatregelenVan, expandCyclus, recompute, WEERGAVEN, FIN_DEFAULT, inflatieVan, indexFactor, btwFactor, npvFactor, bedrag, weergaveDefault, budgetPlan, pasBudgetToe, startFoutafhandeling, callAgent, modelFor, parseJSON, loadData, resetState, emptyState, setState, applySharedCfg, migrateV1 };
 })();
