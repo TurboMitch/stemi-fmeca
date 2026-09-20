@@ -27,6 +27,7 @@ Toegepast tot nu toe:
 | 20-9-2026 | `herstel_functie` | `herstel_dossier()` met back-up vóór herstel |
 | 20-9-2026 | `projectlidmaatschap_rollen_prullenbak_ai_tabel` | maand 4: dossier_leden, RLS per project, prullenbak, portefeuille, dossier_ai |
 | 20-9-2026 | `beheerder_beheert_rollen_van_gebruikers` | beheerder mag rollen wijzigen, niemand promoveert zichzelf |
+| 20-9-2026 | `functierechten_nieuwe_helpers_dichtzetten` | EXECUTE op de nieuwe functies ingetrokken bij PUBLIC/anon |
 
 ## Rechtenmodel (sinds maand 4)
 
@@ -53,6 +54,13 @@ Wat dat afschermt: `dossiers`, `dossier_leden`, `dossier_ai`, `audit_log`, `ai_r
 `dossier_backups` zijn alleen zichtbaar voor leden van het betreffende project. `app_errors` is
 zichtbaar voor de eigen gebruiker en voor beheerders. Wie een project aanmaakt wordt er via de
 trigger `dossier_eigenaar` automatisch eigenaar van.
+
+Let op bij het aanmaken van nieuwe functies: Postgres geeft `EXECUTE` standaard aan `PUBLIC`, en
+`anon` erft dat. `revoke ... from anon` haalt die grant *niet* weg — dat moet
+`revoke all on function ... from public, anon`. De databaselinter ving dit; sindsdien staat het dicht.
+De waarschuwing dat `authenticated` de vier hulpfuncties en `is_admin()` / `herstel_dossier()` mag
+uitvoeren blijft staan en is bedoeld: de policies roepen ze aan, en ze verklappen niets meer dan de
+eigen rol van de aanroeper.
 
 **Bij de invoering is bestaande toegang behouden:** elke bestaande gebruiker is lid geworden van elk
 bestaand project (de aanmaker als eigenaar, de rest als redacteur). De scheiding geldt dus vanaf de
