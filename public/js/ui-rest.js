@@ -64,14 +64,29 @@ async function fetchModels() {
   try { const tok = await window.STEMI_DB.token(); const r = await fetch('/api/models', { headers: { ...(C.cfg.apiKey?{'x-openrouter-key':C.cfg.apiKey}:{}), Authorization: 'Bearer '+tok } }); const d = await r.json(); if (!r.ok) throw new Error(d.error||r.status); window._models = d.models; renderInstellingen(); }
   catch (e) { out.innerHTML = `<span class="warn">${esc(e.message)}</span>`; }
 }
+let apiStatus = null;
+function sleutelStatusHtml() {
+  if (!apiStatus || apiStatus.bezig) return '<p class="note">AI-status wordt opgehaald…</p>';
+  if (apiStatus.fout) return `<p class="note warn">AI-status onbekend: ${esc(apiStatus.fout)}</p>`;
+  const b = apiStatus.tokensVandaag != null ? ` · vandaag ${apiStatus.tokensVandaag.toLocaleString('nl-NL')} van ${apiStatus.dagbudget.toLocaleString('nl-NL')} tokens gebruikt` : '';
+  return apiStatus.sleutelOpServer
+    ? `<p class="note"><b>Sleutel staat op de server</b> (env OPENROUTER_API_KEY) – de sleutel gaat niet via de browser${b}.</p>`
+    : `<p class="note warn"><b>Geen serversleutel.</b> De AI werkt nu alleen met de sleutel die in déze browser is ingevuld; collega's kunnen de AI dan niet gebruiken. Zet OPENROUTER_API_KEY als env var op Vercel (Project → Settings → Environment Variables) en deploy opnieuw${b}.</p>`;
+}
+async function haalApiStatus() {
+  try { const tok = await window.STEMI_DB.token(); const r = await fetch('/api/status', { headers: { Authorization: 'Bearer ' + tok } }); apiStatus = r.ok ? await r.json() : { fout: 'status ' + r.status }; }
+  catch (e) { apiStatus = { fout: e.message }; }
+  if ($('#tab-instellingen').classList.contains('active') || true) renderInstellingen();
+}
 function renderInstellingen() {
+  if (!apiStatus) { apiStatus = { fout: null, bezig: true }; haalApiStatus(); }
   const S = C.state.settings, ov = S.libOverrides || {};
   const q = libQ.trim().toLowerCase(); const hits = q ? C.lib.filter(e => (e.code+' '+e.bouwdeel+' '+e.omschrijving+' '+e.faalwijze).toLowerCase().includes(q)).slice(0,60) : C.lib.filter(e=>ov[e.code]).slice(0,60);
   $('#tab-instellingen').innerHTML = `
     <h2>Instellingen</h2>
     <div class="grid two">
       <div class="card"><h3 style="margin-top:0">OpenRouter-agents</h3>
-        ${window.STEMI_DB?.isAdmin ? `<div class="field"><label>OpenRouter API-sleutel <span class="note">(alleen beheerders; veiliger is de env-var <b>OPENROUTER_API_KEY</b> op Vercel — dan hoeft de sleutel niet via de browser)</span></label><input type="password" id="cfgKey" value="${esc(C.cfg.apiKey||'')}" placeholder="sk-or-v1-…"></div>` : `<p class="note">De API-sleutel wordt beheerd door een beheerder of staat als env-var op de server; je kunt de AI gewoon gebruiken.</p>`}
+        ${sleutelStatusHtml()}${window.STEMI_DB?.isAdmin ? `<div class="field"><label>OpenRouter API-sleutel <span class="note">(alleen beheerders; veiliger is de env-var <b>OPENROUTER_API_KEY</b> op Vercel — dan hoeft de sleutel niet via de browser)</span></label><input type="password" id="cfgKey" value="${esc(C.cfg.apiKey||'')}" placeholder="sk-or-v1-…"></div>` : `<p class="note">De API-sleutel wordt beheerd door een beheerder of staat als env-var op de server; je kunt de AI gewoon gebruiken.</p>`}
         <div class="toolbar"><button class="btn ghost" id="cfgModels">Alle modellen ophalen van OpenRouter</button><input id="modelQ" placeholder="filter (bijv. claude, gpt, gemini, free)" style="min-width:220px"><span id="cfgModelsOut" class="note">${window._models?`${window._models.length} modellen geladen`:'nog niet opgehaald'}</span></div>
         ${[['specialist','Agent tab 03 – analyse & verificatie per regel (zwaarste taak)'],['mapping','Agent kolommapping bij data-import'],['chat','Agent vragen/chat over de dataset']].map(([t,l])=>`<div class="field"><label>${l}</label><select data-model="${t}">${modelOptions(C.cfg.models?.[t]||C.cfg.model)}</select></div>`).join('')}
         <div class="field"><label>Standaardmodel (fallback)</label><select data-model="_default">${modelOptions(C.cfg.model)}</select></div>

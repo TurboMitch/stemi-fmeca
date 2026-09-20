@@ -266,7 +266,7 @@ function setState(st) {
   migrateSettings(state.settings); syncAspects();
   state.maatregelen = state.maatregelen || []; state.audit = state.audit || []; state.ai = state.ai || {}; state.besluiten = state.besluiten || []; state.specialist = state.specialist || [];
 }
-function applySharedCfg(v) { if (v) cfg = Object.assign(cfg, v); }
+function applySharedCfg(v) { if (!v) return; const { apiKey, ...rest } = v; cfg = Object.assign(cfg, rest); if (apiKey) cfg.apiKey = apiKey; /* lege gedeelde sleutel mag een lokaal ingevulde sleutel niet wissen */ }
 function resetState() { state = emptyState(); save(); }
 
 return { ASP, ASP_SHORT, ONTWIKKELING, INTENSITEIT, ERNST, INSPECTEERBAAR, PRIOS, MODELS, SP_NUM, SP_FIELDS, syncAspects, addAspect, removeAspect, oKlasse, dKlasse,
