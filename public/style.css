@@ -130,3 +130,7 @@ tr.sub td{border-top:0}
 
 .qbar{height:8px;background:var(--line);border-radius:4px;width:160px;overflow:hidden}.qbar div{height:100%}.qbar .ok{background:#3aa66a}.qbar .mid{background:#e0a020}.qbar .low{background:#d64545}
 [data-map]{min-width:170px;max-width:220px}
+.card.blok{border-color:#d64545;background:color-mix(in srgb,#d64545 6%,var(--card))}
+.card.blok ul{margin:6px 0 0;padding-left:20px;font-size:12px}
+tr.blokrij td{background:color-mix(in srgb,#d64545 10%,transparent)}
+tr.waarschrij td{background:color-mix(in srgb,#e0a020 12%,transparent)}
