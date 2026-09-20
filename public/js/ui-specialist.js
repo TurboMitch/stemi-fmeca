@@ -2,6 +2,7 @@
 (() => {
 const C = window.STEMI; const { $, $$, esc, num, eur, pct, ASP, ASP_SHORT } = C;
 let chatHistory = [];
+let laatsteMislukt = []; // regels die bij de laatste AI-ronde faalden (voor herkansing)
 const AI_FIELDS = [['faalwijze','Faalwijze'],['O','O'],['onderbouwingO','Onderbouwing O'],['D','D'],['onderbouwingD','Onderbouwing D'],['Tklasse','T-klasse'],['Tjaar','T jaar'],['onderbouwingT','Onderbouwing T'],['effect','Effecten (8)'],['onderbouwingEffect','Onderbouwing effecten'],['maatregel','Maatregel'],['restS','Rest S'],['restO','Rest O'],['restD','Rest D'],['restToelichting','Restrisico toelichting'],['kostenSpecialist','Kosten specialist'],['onderbouwingKosten','Onderbouwing kosten'],['scopeOverride','Scope-override'],['onderbouwingScope','Onderbouwing scope'],['aanvullendOnderzoek','Aanvullend onderzoek']];
 const BRON = { systeem:['Systeem','sys'], excel:['Excel','xl'], ai:['AI','ai'], mens:['Mens','mens'] };
 const tklassen = () => C.state.settings.rules.tKlassen.map(t=>t.klasse);
@@ -25,7 +26,7 @@ ${K.S.map(s=>`  ${s.score} ${s.generiek}: ${ASP.map((a,i)=>`${a}: ${s.aspecten[i
 ${K.beoordelingsregels || ''}
 - Maatregel: concreet en uitvoerbaar; benoem integraal (hele element) of lokaal (alleen gebrek) en waarom.
 - Restrisico S/O/D: scores ná uitvoering van de maatregel.
-- Kosten: als er een koppeltabel met kengetallen vervangen/herstellen/reinigen is, controleer of het gekozen kengetal past bij de maatregel die jij voorstelt (herstellen vs vervangen vs reinigen); zo niet: kies het andere kengetal × hoeveelheid als kostenSpecialist en leg dat uit. Beoordeel het eerste kostenvoorstel (hoeveelheid × kengetal) op realisme (bereikbaarheid, steigers, voorbereiding, veiligheidsmaatregelen, onderzoek). Geef alleen een overschrijving als je die kunt onderbouwen; anders null.
+- Kosten: als er een koppeltabel met kengetallen vervangen/herstellen/reinigen is, controleer of het gekozen kengetal past bij de maatregel die jij voorstelt (herstellen vs vervangen vs reinigen); zo niet: kies het andere kengetal × hoeveelheid als kostenSpecialist en leg dat uit. Beoordeel het eerste kostenvoorstel (hoeveelheid × kengetal) op realisme (bereikbaarheid, steigers, voorbereiding, veiligheidsmaatregelen, onderzoek). Geef alleen een overschrijving als je die kunt onderbouwen; anders null. HARDE REGEL: als 'eersteKostenvoorstel' ontbreekt of 0 is (hoeveelheid en/of kengetal onbekend), zet je kostenSpecialist op null en meld je in onderbouwingKosten welke invoer ontbreekt — je verzint geen bedrag. Een bedrag dat meer dan 4x afwijkt van het eerste kostenvoorstel wordt door het systeem geweigerd, dus onderbouw grote afwijkingen of houd het voorstel aan.
 - Verificatie: als er al waarden van een specialist of uit Excel staan, controleer die expliciet: bevestig of wijk af, met reden.
 - Data uit onderhoudssoftware: als 'risicoaspectenInspecteurNEN2767' aanwezig is (veiligheid/gebruik/beleving/vervolgschade/klachten met Matig/Sterk), gebruik dat als hint voor de effectscores en benoem het in de onderbouwing. Als de bibliotheekkoppeling onzeker is (zekerheid middel/laag) of ontbreekt, beoordeel zelf welke kandidaat past of geef aan dat geen kandidaat past; noem de gekozen code in gebruikteBronnen. Ontbrekende inspectievelden (ontwikkelingsklasse, inspecteerbaarheid) vul je in op basis van gebreksoort, intensiteit, ernst en ervaring, met lager vertrouwen.
 ${C.cfg.context ? '\nORGANISATIECONTEXT\n' + C.cfg.context : ''}
@@ -49,19 +50,20 @@ function rowContext(r) {
 }
 const rowStatus = {}; // id -> {state:'bezig'|'ok'|'fout', msg, t0}
 function setRowStatus(id, state, msg='') { rowStatus[id] = { state, msg, t0: state==='bezig' ? Date.now() : (rowStatus[id]?.t0) }; const el = $(`[data-rowstatus="${id}"]`); if (el) el.innerHTML = statusHtml(id); }
-function statusHtml(id) { const st = rowStatus[id]; if (!st) return ''; if (st.state==='bezig') return `<span class="spin"></span><span class="note">agent bezig… ${Math.round((Date.now()-st.t0)/1000)}s</span>`; if (st.state==='fout') return `<span class="warn" title="${esc(st.msg)}">Fout: ${esc(st.msg.slice(0,90))}</span>`; return `<span class="tag">klaar in ${Math.round((Date.now()-st.t0)/1000)}s</span>`; }
+function statusHtml(id) { const st = rowStatus[id]; if (!st) return ''; if (st.state==='bezig') return `<span class="spin"></span><span class="note">agent bezig… ${Math.round((Date.now()-st.t0)/1000)}s</span>`; if (st.state==='wacht') return `<span class="spin"></span><span class="warn">${esc(st.msg)}</span>`; if (st.state==='fout') return `<span class="warn" title="${esc(st.msg)}">Fout: ${esc(st.msg.slice(0,90))}</span>`; return `<span class="tag">klaar in ${Math.round((Date.now()-st.t0)/1000)}s</span>`; }
 setInterval(() => { for (const id in rowStatus) if (rowStatus[id].state==='bezig') { const el = $(`[data-rowstatus="${id}"]`); if (el) el.innerHTML = statusHtml(+id); } }, 1000);
 async function analyzeRow(id, extra='') {
   const r = C.calc.rows.find(x=>x.id===id); const ctx = rowContext(r);
   const msgs = [{role:'system',content:systemPrompt()},{role:'user',content:`Interpreteer deze FMECA-regel en vul tabblad 03 volledig in.${extra?'\nExtra instructie: '+extra:''}\n\n${JSON.stringify(ctx,null,1)}`}];
   setRowStatus(id, 'bezig');
   try {
-    let d = await C.callAgent(msgs, true, {taak:'specialist'});
+    let d = await C.callAgent(msgs, true, {taak:'specialist', onWacht:(ms,poging,msg)=>setRowStatus(id,'wacht',`poging ${poging} mislukt (${String(msg).slice(0,60)}) – opnieuw over ${Math.round(ms/1000)}s`)});
     let p; try { p = C.parseJSON(d.content); } catch (e) {
       if (d.finish_reason === 'length') { setRowStatus(id, 'bezig'); d = await C.callAgent(msgs, true, {taak:'specialist', max_tokens: 32000}); try { p = C.parseJSON(d.content); } catch (e2) { throw new Error('Antwoord afgekapt (finish_reason length), ook na herhaling met meer tokens'); } }
       else throw new Error('Geen geldige JSON van het model (' + (d.finish_reason||'?') + '): ' + String(d.content).slice(0,120));
     }
-    C.state.ai[id] = { ...p, _model: d.model, _ts: new Date().toISOString(), _usage: d.usage, _input: ctx }; C.save();
+    const flags = keurAI(p, r);
+    C.state.ai[id] = { ...p, _model: d.model, _ts: new Date().toISOString(), _usage: d.usage, _flags: flags }; C.save();
     if (window.STEMI_DB) window.STEMI_DB.logAiRun({ regel:id, taak:'specialist', model:d.model, input:{ system: msgs[0].content, context: ctx, extra }, output:p, usage:d.usage });
     setRowStatus(id, 'ok'); return p;
   } catch (e) {
@@ -70,6 +72,32 @@ async function analyzeRow(id, extra='') {
     throw e;
   }
 }
+/** Plausibiliteitscontrole op AI-output. Waarden die niet kunnen worden NIET overgenomen maar gemarkeerd
+    (ai._flags). Zonder hoeveelheid x kengetal is er geen kostenbasis, dus kosten worden dan nooit automatisch
+    overgenomen — dat voorkomt verzonnen bedragen in het MJOP. */
+const KOSTEN_ONDER = 0.25, KOSTEN_BOVEN = 4;
+function keurAI(p, r) {
+  const flags = []; const heel = (v, min, max) => { const n = num(v); if (n == null) return null; const i = Math.round(n); return i < min || i > max ? null : i; };
+  const clamp = (veld, v, min, max) => { const i = heel(v, min, max); if (v != null && v !== '' && i == null) { flags.push({ veld, waarde: v, reden: `buiten toegestaan bereik ${min}–${max}` }); return undefined; } return i ?? undefined; };
+  for (const k of ['O','D','restS','restO','restD']) if (p[k] !== undefined) { const v = clamp(k, p[k], k === 'O' || k === 'D' ? 1 : 0, 10); if (v === undefined) delete p[k]; else p[k] = v; }
+  if (Array.isArray(p.effect)) {
+    if (p.effect.length !== ASP.length) { flags.push({ veld:'effect', waarde:`${p.effect.length} waarden`, reden:`verwacht ${ASP.length} waardeaspecten` }); delete p.effect; }
+    else { const e = p.effect.map(v => heel(v, 0, 10)); if (e.some(x => x == null)) { flags.push({ veld:'effect', waarde: p.effect.join(', '), reden:'niet alle effecten zijn 0–10' }); delete p.effect; } else p.effect = e; }
+  }
+  const hor = num(C.state.settings.params.horizon) || 15;
+  if (p.Tjaar != null && p.Tjaar !== '') { const t = num(p.Tjaar); if (t == null || t < 0 || t > hor * 3) { flags.push({ veld:'Tjaar', waarde: p.Tjaar, reden:`geen geloofwaardige termijn (0–${hor * 3} jaar)` }); delete p.Tjaar; } }
+  if (p.Tklasse && !tklassen().includes(p.Tklasse)) { flags.push({ veld:'Tklasse', waarde: p.Tklasse, reden:'geen bestaande T-klasse' }); delete p.Tklasse; }
+  // kosten: alleen met een controleerbare basis (hoeveelheid x kengetal) en binnen een bandbreedte
+  if (p.kostenSpecialist != null && p.kostenSpecialist !== '') {
+    const k = num(p.kostenSpecialist); const basis = num(r.eersteVoorstel);
+    if (k == null || k < 0) { flags.push({ veld:'kostenSpecialist', waarde: p.kostenSpecialist, reden:'geen geldig bedrag' }); delete p.kostenSpecialist; }
+    else if (!basis) { flags.push({ veld:'kostenSpecialist', waarde: eur(k), reden:'geen kostenbasis: hoeveelheid en/of kengetal ontbreekt in tab 02 — bedrag niet overgenomen' }); delete p.kostenSpecialist; }
+    else if (k < basis * KOSTEN_ONDER || k > basis * KOSTEN_BOVEN) { flags.push({ veld:'kostenSpecialist', waarde: eur(k), reden:`wijkt ${(k / basis).toFixed(1)}x af van het systeemvoorstel ${eur(basis)} (toegestaan ${KOSTEN_ONDER}x–${KOSTEN_BOVEN}x) — ter beoordeling` }); delete p.kostenSpecialist; }
+  }
+  return flags;
+}
+function flagsVan(id) { return C.state.ai[id]?._flags || []; }
+function flagsTotaal() { return C.calc.rows.reduce((a, r) => a + flagsVan(r.id).length, 0); }
 /** past AI-voorstel toe; menselijke velden blijven staan tenzij overschrijf=true */
 function applyAI(id, keys, overschrijf=false) {
   const ai = C.state.ai[id]; if (!ai) return 0; const sp = C.getSp(id); let n=0;
@@ -79,15 +107,16 @@ function applyAI(id, keys, overschrijf=false) {
   C.save(); return n;
 }
 async function aiFillAll(opts={}) {
-  if (!C.cfg.apiKey) { window.STEMI_UI.switchTab('instellingen'); C.toast('Vul eerst een OpenRouter-sleutel in en klik Opslaan'); return; }
-  const rows = C.calc.rows.filter(r => opts.alleenNieuw ? !C.state.ai[r.id] : true); if (!rows.length) { C.toast('Niets te doen'); return; }
+  /* geen sleutelcheck meer in de browser: de sleutel kan server-side staan (env OPENROUTER_API_KEY); de API meldt het als hij ontbreekt */
+  const rows = C.calc.rows.filter(r => opts.ids ? opts.ids.includes(r.id) : (opts.alleenNieuw ? !C.state.ai[r.id] : true)); if (!rows.length) { C.toast('Niets te doen'); return; }
   const btn = $('#aiAll'); let done=0, fails=0; if (btn) btn.disabled = true;
   const upd = () => { if (btn) btn.innerHTML = `<span class="spin"></span>${done}/${rows.length} klaar${fails?` · ${fails} fout`:''} – model ${esc(C.modelFor('specialist'))}`; };
   upd();
-  const queue = rows.slice(); const CONC = 3;
-  const worker = async () => { while (queue.length) { const r = queue.shift(); try { await analyzeRow(r.id); applyAI(r.id, AI_FIELDS.map(f=>f[0]), !!opts.overschrijf); C.recompute(); } catch(e) { fails++; C.audit({regel:r.id, veld:'ai', nieuw:'mislukt: '+e.message, bron:'ai'}); } done++; upd(); } };
+  const queue = rows.slice(); const CONC = 2; const mislukt = [];
+  const worker = async () => { while (queue.length) { const r = queue.shift(); try { await analyzeRow(r.id); applyAI(r.id, AI_FIELDS.map(f=>f[0]), !!opts.overschrijf); C.recompute(); } catch(e) { fails++; mislukt.push(r.id); C.audit({regel:r.id, veld:'ai', nieuw:'mislukt: '+e.message, bron:'ai'}); } done++; upd(); } };
   try { await Promise.all(Array.from({length: Math.min(CONC, rows.length)}, worker)); }
-  finally { C.save(); window.STEMI_UI.renderAll('specialist'); C.toast(fails ? `${rows.length-fails} regel(s) ingevuld, ${fails} mislukt – zie de kolom Status` : `AI heeft ${rows.length} regel(s) ingevuld`, 6000); }
+  finally { C.save(); laatsteMislukt = mislukt; const fl = flagsTotaal(); window.STEMI_UI.renderAll('specialist');
+    C.toast(fails ? `${rows.length-fails} regel(s) ingevuld, ${fails} mislukt – gebruik “Mislukte regels opnieuw”` : `AI heeft ${rows.length} regel(s) ingevuld${fl?`; ${fl} waarde(n) niet overgenomen na controle`:''}`, 8000); }
 }
 function provBadge(sp, k) { const p = (sp.prov||{})[k.startsWith('effect')?'effect':k]; if (!p) return '<span class="prov sys" title="systeemvoorstel (leeg veld)">sys</span>'; const b = BRON[p.bron]||[p.bron,p.bron]; return `<span class="prov ${b[1]}" title="${esc(p.bron)} · ${new Date(p.ts).toLocaleString('nl-NL')}${p.model?' · '+esc(p.model):''}">${b[0]}</span>`; }
 /** herkomst-icoon (i) per veld: opent een popover met bron, tijd, model, onderbouwing, systeemvoorstel, AI-voorstel en historie */
@@ -168,12 +197,13 @@ function render() {
   el.innerHTML = `
     <h2>03 Technisch specialist / ME <span class="ai-badge">AI-laag</span></h2><p class="sub">De AI vult op basis van tab 02 en de gebrekenbibliotheek álle velden in, verifieert bestaande waarden en overschrijft waar nodig – altijd met onderbouwing. De specialist controleert en corrigeert; elke waarde heeft een herkomst. <span class="prov inl sys">sys</span> systeemvoorstel · <span class="prov inl ai">AI</span> · <span class="prov inl mens">Mens</span> · <span class="prov inl xl">Excel</span></p>
     <div class="toolbar">
-      <button class="btn" id="aiAll">${C.cfg.apiKey?'':'🔒 '}AI: alle regels invullen &amp; verifiëren</button>
+      <button class="btn" id="aiAll">AI: alle regels invullen &amp; verifiëren</button>
       <button class="btn ghost" id="aiNew">Alleen nieuwe regels</button>
       <label class="note"><input type="checkbox" id="aiOverschrijf"> menselijke invoer mag overschreven worden</label>
       <button class="btn ghost" id="aiChat">Vraag de agent</button>
+      ${laatsteMislukt.length?`<button class="btn ghost" id="aiRetry" title="alleen de regels die faalden opnieuw proberen">Mislukte regels opnieuw (${laatsteMislukt.length})</button>`:''}
       <span class="spacer"></span>
-      <span class="note">${nAI}/${R.length} door AI · ${nMens} met menselijke correctie · model <b>${esc(C.modelFor('specialist'))}</b>${C.cfg.apiKey?'':' · <span class="warn">geen sleutel (Instellingen)</span>'}</span>
+      <span class="note">${nAI}/${R.length} door AI · ${nMens} met menselijke correctie${flagsTotaal()?` · <span class="warn">${flagsTotaal()} waarde(n) niet overgenomen na controle</span>`:''} · model <b>${esc(C.modelFor('specialist'))}</b></span>
       <label class="note"><input type="checkbox" id="showSys" ${C.cfg.showSys?'checked':''}> systeemvoorstellen tonen</label>
     </div>
     <div class="tablewrap"><table><thead><tr><th>ID</th><th>Element</th><th class="wrap">Constatering</th><th>Cond.</th><th class="wrap">Faalwijze</th><th>O</th><th class="wrap">Onderbouwing O</th><th>D</th><th class="wrap">Onderbouwing D</th><th>T-klasse</th><th>T jr</th>${ASP_SHORT.map((a,i)=>`<th title="${ASP[i]}">${a}</th>`).join('')}<th class="wrap">Maatregel</th><th>Rest S/O/D</th><th>Kosten spec. €</th><th class="wrap">Onderbouwing kosten</th><th>Scope</th><th>Status</th><th>Verantwoording</th></tr></thead><tbody>
@@ -192,7 +222,7 @@ function render() {
       <td class="oranje">${P('kostenSpecialist')}<input class="n" style="width:80px" data-sp="${id}" data-k="kostenSpecialist" value="${esc(sp.kostenSpecialist??'')}" placeholder="${r.eersteVoorstel??''}"></td>
       <td class="oranje">${I('onderbouwingKosten')}<textarea data-sp="${id}" data-k="onderbouwingKosten">${esc(sp.onderbouwingKosten||'')}</textarea></td>
       <td class="oranje">${I('scopeOverride')}<select data-sp="${id}" data-k="scopeOverride"><option value="">(${esc(r.begrotingswijze||'–')})</option><option ${sp.scopeOverride==='Integraal uitvoeren'?'selected':''}>Integraal uitvoeren</option><option ${sp.scopeOverride==='Lokaal uitvoeren'?'selected':''}>Lokaal uitvoeren</option></select></td>
-      <td><span class="tag">${esc(r.aiStatus)}</span>${ai?`<div class="note">vertrouwen ${esc(ai.vertrouwen||'?')}</div>`:''}<div data-rowstatus="${id}">${statusHtml(id)}</div></td>
+      <td><span class="tag">${esc(r.aiStatus)}</span>${ai?`<div class="note">vertrouwen ${esc(ai.vertrouwen||'?')}</div>`:''}${flagsVan(id).length?`<div class="warn" title="${esc(flagsVan(id).map(f=>f.veld+': '+f.reden).join(' | '))}">⚠ ${flagsVan(id).length} niet overgenomen</div>`:''}<div data-rowstatus="${id}">${statusHtml(id)}</div></td>
       <td><button class="btn small" data-ai="${id}">${ai?'Verantwoording':'AI invullen'}</button></td></tr>`; }).join('')}
     </tbody></table></div>`;
   $$('[data-sp]').forEach(i => i.onchange = () => { const id=+i.dataset.sp, k=i.dataset.k; C.setSp(id, k, i.value, 'mens'); const sp=C.getSp(id); if (k==='Tklasse' && i.value && sp.Tjaar == null) C.setSp(id,'Tjaar',C.tJaarVanKlasse(i.value),'systeem'); C.save(); window.STEMI_UI.renderAll('specialist'); });
@@ -201,6 +231,7 @@ function render() {
   $('#aiAll').onclick = () => aiFillAll({overschrijf: $('#aiOverschrijf').checked});
   $('#aiNew').onclick = () => aiFillAll({alleenNieuw:true, overschrijf: $('#aiOverschrijf').checked});
   $('#aiChat').onclick = openChat;
+  const rt = $('#aiRetry'); if (rt) rt.onclick = () => aiFillAll({ ids: laatsteMislukt.slice(), overschrijf: $('#aiOverschrijf').checked });
   $('#showSys').onchange = e => { C.cfg.showSys = e.target.checked; C.saveCfg(); render(); };
 }
 
@@ -221,10 +252,12 @@ function openAI(id) {
     ${ai.gebruikteBronnen?.length?`<h3>Gebruikte bronnen</h3><ul>${ai.gebruikteBronnen.map(o=>`<li>${esc(o)}</li>`).join('')}</ul>`:''}
     ${ai.aanvullendOnderzoek?`<h3>Aanvullend onderzoek</h3><p>${esc(ai.aanvullendOnderzoek)}</p>`:''}
     ${ai.onzekerheden?.length?`<h3>Onzekerheden</h3><ul>${ai.onzekerheden.map(o=>`<li>${esc(o)}</li>`).join('')}</ul>`:''}
-    <details><summary>Input naar de agent (herleidbaarheid)</summary><pre class="mono pre">${esc(JSON.stringify(ai._input,null,1))}</pre></details>
+    ${ai._flags?.length?`<h3>Niet overgenomen (plausibiliteitscontrole)</h3><table class="diff"><tbody>${ai._flags.map(f=>`<tr><td><b>${esc(f.veld)}</b></td><td>${esc(String(f.waarde))}</td><td class="warn">${esc(f.reden)}</td></tr>`).join('')}</tbody></table>`:''}
+    <details id="aiInputBox"><summary>Input naar de agent (herleidbaarheid)</summary><p class="note">De volledige prompt en context staan in de database (tabel ai_runs). <button class="btn ghost small" id="aiLoadInput">Ophalen</button></p><pre class="mono pre hidden" id="aiInputPre"></pre></details>
     <details><summary>Ruwe JSON van de agent</summary><pre class="mono pre">${esc(JSON.stringify(ai,null,1))}</pre></details>` : '<p class="note" style="margin-top:12px">Nog geen AI-voorstel voor deze regel.</p>'}
     <h3>Wijzigingshistorie (${hist.length})</h3>${hist.length?`<table class="diff"><tbody>${hist.slice(0,12).map(h=>`<tr><td class="note">${new Date(h.ts).toLocaleString('nl-NL')}</td><td><b>${esc(h.veld)}</b> <span class="prov ${BRON[h.bron]?.[1]||''}">${esc(h.bron)}</span></td><td>${esc(fmt(h.oud))} → ${esc(fmt(h.nieuw))}${h.model?`<div class="note">${esc(h.model)}</div>`:''}</td></tr>`).join('')}</tbody></table>`:'<p class="note">Geen wijzigingen vastgelegd.</p>'}`;
-  $('#aiRun').onclick = async () => { if(!C.cfg.apiKey){window.STEMI_UI.switchTab('instellingen');C.toast('Vul eerst een OpenRouter-sleutel in');return;} const st=$('#aiStatus'); st.innerHTML='<span class="spin"></span>agent denkt…'; $('#aiRun').disabled=true; try { await analyzeRow(id, $('#aiExtra').value.trim()); openAI(id); } catch(e) { st.innerHTML=`<span class="warn">${esc(e.message)}</span>`; $('#aiRun').disabled=false; } };
+  $('#aiRun').onclick = async () => { const st=$('#aiStatus'); st.innerHTML='<span class="spin"></span>agent denkt…'; $('#aiRun').disabled=true; try { await analyzeRow(id, $('#aiExtra').value.trim()); openAI(id); } catch(e) { st.innerHTML=`<span class="warn">${esc(e.message)}</span>`; $('#aiRun').disabled=false; } };
+  const li = $('#aiLoadInput'); if (li) li.onclick = async () => { li.disabled = true; li.textContent = 'ophalen…'; try { const runs = await window.STEMI_DB.aiRunsVan(id); const pre = $('#aiInputPre'); pre.classList.remove('hidden'); pre.textContent = runs.length ? JSON.stringify(runs[0].input, null, 1) : 'geen run gevonden'; li.classList.add('hidden'); } catch (e) { li.textContent = 'mislukt: ' + e.message; } };
   $$('[data-apply]', body).forEach(b => b.onclick = () => { applyAI(id, [b.dataset.apply], true); C.recompute(); render(); openAI(id); });
   const all = $('#aiApplyAll'); if (all) all.onclick = () => { const n = applyAI(id, AI_FIELDS.map(f=>f[0]), $('#aiOv2').checked); C.recompute(); render(); openAI(id); C.toast(`${n} veld(en) overgenomen`); };
 }
@@ -233,7 +266,7 @@ function openChat() {
   body.innerHTML = `<div class="chat" id="chatLog">${chatHistory.length?chatHistory.map(m=>`<div class="msg ${m.role==='user'?'user':'ai'}">${esc(m.content)}</div>`).join(''):'<p class="note">Vragen over de FMECA-regels, bijv. “Welke O-scores zijn twijfelachtig?”, “Vat de risico’s per waardeaspect samen”, “Waar wijkt de specialist af van het systeemvoorstel en is dat onderbouwd?”. De agent krijgt tab 02/03/04 en het instellingenprofiel mee.</p>'}</div>
     <div class="field" style="margin-top:10px"><textarea id="chatIn" rows="3" placeholder="Vraag…"></textarea></div><button class="btn" id="chatSend">Verstuur</button> <button class="btn ghost small" id="chatClear">Wissen</button> <span id="chatStatus" class="note"></span>`;
   $('#chatSend').onclick = async () => {
-    const q = $('#chatIn').value.trim(); if(!q) return; if(!C.cfg.apiKey){window.STEMI_UI.switchTab('instellingen');C.toast('Vul eerst een OpenRouter-sleutel in');return;}
+    const q = $('#chatIn').value.trim(); if(!q) return;
     chatHistory.push({role:'user',content:q}); $('#chatIn').value=''; openChat(); $('#chatStatus').innerHTML='<span class="spin"></span>';
     const ctx = { instellingenprofiel: C.state.settings.naam, parameters: C.state.settings.params, beslisregels: C.state.settings.rules, waardekompasBelang: Object.fromEntries(ASP.map((a,i)=>[a,C.calc.bel[i]])), regels: C.calc.rows.map(r=>({ ...rowContext(r), systeemmodel: { Stech:r.Stech, RPNtech:r.RPNtech, Swaarde:r.Swaarde, RPNwaarde:r.RPNwaarde, basis:r.basis, safety:r.safety, compliance:r.compliance, tPrio:r.tPrio, definitief:r.prio, laatsteJaar:r.laatsteJaar, deadline:r.deadline, domWaarde:r.domWaarde }, aiVoorstel: C.state.ai[r.id] ? {vertrouwen:C.state.ai[r.id].vertrouwen, onzekerheden:C.state.ai[r.id].onzekerheden} : null })) };
     const sys = systemPrompt().replace(/ANTWOORD ALTIJD MET ÉÉN JSON-OBJECT[\s\S]*$/, 'Beantwoord vragen van de specialist/assetmanager over de dataset hieronder. Antwoord in helder Nederlands met platte tekst (geen JSON), verwijs naar regel-ID’s en benoem concreet welke veldwaarden je zou aanpassen en waarom.\n\nDATASET:\n' + JSON.stringify(ctx));
@@ -242,5 +275,6 @@ function openChat() {
   };
   $('#chatClear').onclick = () => { chatHistory=[]; openChat(); };
 }
+if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__keur = keurAI; /* alleen lokaal: hook voor de testsuite */
 window.STEMI_UI = window.STEMI_UI || {}; Object.assign(window.STEMI_UI, { renderSpecialist: render, aiFillAll, analyzeRow, applyAI, AI_FIELDS });
 })();

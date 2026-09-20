@@ -75,6 +75,46 @@ function detectRules(imp) {
   return rules;
 }
 
+/** Controleert de kolommapping vóór importeren. Geeft blokkades (import onmogelijk) en waarschuwingen.
+    Dit vangt de twee fouten die een hele dataset onbruikbaar maken: twee doelvelden op dezelfde bronkolom,
+    en een tekstkolom op een numeriek veld (dan wordt alles leeg zonder dat iemand het ziet). */
+const NUM_DOEL = ['hoevTotaal','hoevGebrek','conditie','kengetal','omslagMaatregel','omvang'];
+const VERPLICHT = [['element','Element'],['constatering','Technische constatering']];
+const BELANGRIJK = [['hoevTotaal','Totale hoeveelheid','zonder hoeveelheid is er geen kostenbasis en geen omvangberekening'],['eenheid','Eenheid','nodig om kengetallen te kunnen koppelen'],['intensiteit','Intensiteit','nodig voor het O-systeemvoorstel'],['conditie','NEN 2767 conditie','nodig voor rapportage en signalering']];
+function valideerMapping(imp) {
+  const { headers, rows, map } = imp; const blokkades = [], waarschuwingen = [];
+  // 1. dezelfde bronkolom aan meerdere doelvelden
+  const perKolom = {};
+  for (const k in map) { if (k.startsWith('_')) continue; (perKolom[map[k]] = perKolom[map[k]] || []).push(k); }
+  for (const kol in perKolom) if (perKolom[kol].length > 1)
+    blokkades.push({ type: 'dubbel', velden: perKolom[kol], tekst: `Kolom “${headers[kol] || ('kolom ' + (+kol + 1))}” is aan ${perKolom[kol].length} doelvelden gekoppeld (${perKolom[kol].join(', ')}). Koppel elke bronkolom aan één doelveld.` });
+  // 2. numeriek doelveld met niet-numerieke inhoud
+  const steek = rows.slice(0, 200);
+  for (const k of NUM_DOEL) {
+    if (map[k] == null) continue;
+    const vals = steek.map(r => r[map[k]]).filter(v => v != null && v !== '');
+    if (!vals.length) { waarschuwingen.push({ veld: k, tekst: `Kolom “${headers[map[k]]}” (→ ${k}) is in de eerste ${steek.length} rijen helemaal leeg.` }); continue; }
+    const numeriek = vals.filter(v => num(String(v).replace('%', '').replace(',', '.')) != null).length;
+    const deel = numeriek / vals.length;
+    if (deel < 0.5) blokkades.push({ type: 'type', velden: [k], tekst: `Kolom “${headers[map[k]]}” is gekoppeld aan het getalveld ${k}, maar slechts ${Math.round(deel * 100)}% van de waarden is een getal (bijv. “${String(vals[0]).slice(0, 20)}”). Zo wordt ${k} voor alle regels leeg.` });
+    else if (deel < 0.95) waarschuwingen.push({ veld: k, tekst: `Kolom “${headers[map[k]]}” (→ ${k}): ${Math.round((1 - deel) * 100)}% van de waarden is geen getal en wordt leeg gelaten.` });
+  }
+  // 3. verplicht / belangrijk
+  for (const [k, l] of VERPLICHT) if (map[k] == null) blokkades.push({ type: 'verplicht', velden: [k], tekst: `Verplicht veld “${l}” is niet gekoppeld.` });
+  for (const [k, l, waarom] of BELANGRIJK) if (map[k] == null) waarschuwingen.push({ veld: k, tekst: `“${l}” is niet gekoppeld — ${waarom}.` });
+  // 4. ongebruikte kolom die sterk op een ontbrekend belangrijk veld lijkt
+  const gebruikt = new Set(Object.values(map));
+  for (const [k, l] of BELANGRIJK) {
+    if (map[k] != null) continue;
+    const kandidaat = headers.findIndex((h, i) => h && !gebruikt.has(i) && rows.slice(0, 20).some(r => r[i] != null && r[i] !== ''));
+    if (kandidaat >= 0 && NUM_DOEL.includes(k)) {
+      const vals = rows.slice(0, 50).map(r => r[kandidaat]).filter(v => v != null && v !== '');
+      if (vals.length && vals.every(v => num(String(v).replace(',', '.')) != null)) waarschuwingen.push({ veld: k, tekst: `Kolom “${headers[kandidaat]}” bevat alleen getallen en is niet gekoppeld — is dit “${l}”?` });
+    }
+  }
+  return { blokkades, waarschuwingen };
+}
+
 /** past de regels toe op één gestandaardiseerde regel (na kolommapping/normalisatie) */
 function applyRules(o, rules, ctx) {
   const on = id => rules.find(r => r.id === id && r.aan);
@@ -158,5 +198,5 @@ function vindProfiel(headers, profielen) {
 }
 function pasProfielToe(imp, p) { const map = {}; for (const k in p.map) { const i = imp.headers.findIndex(h => norm(h) === norm(p.map[k])); if (i >= 0) map[k] = i; } imp.map = map; imp.profielNaam = p.naam; imp.profielToegepast = true; }
 
-return { detectRules, applyRules, matchLib, quality, profielVan, vindProfiel, pasProfielToe, PREFIX_RE, isGuid, LOOKUP_FIELDS, LOOKUP_KEYS, autoMapLookup, kiesKengetal, applyLookup };
+return { valideerMapping, detectRules, applyRules, matchLib, quality, profielVan, vindProfiel, pasProfielToe, PREFIX_RE, isGuid, LOOKUP_FIELDS, LOOKUP_KEYS, autoMapLookup, kiesKengetal, applyLookup };
 })();

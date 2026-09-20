@@ -67,8 +67,8 @@ function migrateV1(old) {
   return st;
 }
 function save() { try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch{} if (window.STEMI_DB) window.STEMI_DB.persist(state); }
-function saveCfg() { try { localStorage.setItem(LS_CFG, JSON.stringify(cfg)); } catch{} if (window.STEMI_DB) window.STEMI_DB.setSetting('openrouter', cfg).catch(e=>console.warn(e)); }
-function audit(entry) { const e = {ts:new Date().toISOString(), user: window.STEMI_DB?.profile?.username, ...entry}; state.audit.unshift(e); if (state.audit.length>2000) state.audit.length=2000; if (window.STEMI_DB) window.STEMI_DB.logAudit(e); }
+function saveCfg() { try { localStorage.setItem(LS_CFG, JSON.stringify(cfg)); } catch{} if (window.STEMI_DB) window.STEMI_DB.setShared(cfg).catch(e=>console.warn(e)); }
+function audit(entry) { const e = {ts:new Date().toISOString(), user: window.STEMI_DB?.profile?.username, ...entry}; state.audit.unshift(e); if (state.audit.length>300) state.audit.length=300; /* volledige trail staat in audit_log */ if (window.STEMI_DB) window.STEMI_DB.logAudit(e); }
 function getSp(id) { let sp = state.specialist.find(x=>x.id===id); if(!sp){ sp={id,effect:[],prov:{}}; state.specialist.push(sp);} sp.prov = sp.prov||{}; return sp; }
 /** zet een specialistveld met herkomst; logt in audit */
 function setSp(id, k, v, bron, meta={}) {
@@ -187,16 +187,34 @@ function recompute() {
 
 // ---------- OpenRouter ----------
 function modelFor(taak) { return (cfg.models && cfg.models[taak]) || cfg.model; }
-async function callAgent(messages, json=true, opts={}) {
+/** tijdelijke fouten waarbij opnieuw proberen zin heeft (OpenRouter-credits/rate limit, overbelast model, 5xx) */
+const HERKANSBAAR = /credit|rate limit|rate-limit|429|402|503|502|overloaded|temporarily|in-flight|too many/i;
+async function callAgentOnce(messages, json, opts) {
   const tok = window.STEMI_DB ? await window.STEMI_DB.token() : null;
   const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), opts.timeoutMs || 240000);
   let r, d;
   try {
     r = await fetch('/api/analyze', { method:'POST', signal: ctrl.signal, headers:{'Content-Type':'application/json', ...(cfg.apiKey?{'x-openrouter-key':cfg.apiKey}:{}), ...(tok?{'Authorization':'Bearer '+tok}:{})}, body: JSON.stringify({ model: opts.model||modelFor(opts.taak||'specialist'), messages, json, max_tokens: opts.max_tokens||16000 }) });
     const txt = await r.text(); try { d = JSON.parse(txt); } catch { d = { error: (r.status===504?'Time-out op de server (model te traag)':'Onverwacht antwoord '+r.status) + ': ' + txt.slice(0,200) }; }
-  } catch (e) { throw new Error(e.name === 'AbortError' ? 'Time-out: het model antwoordde niet binnen 4 minuten' : 'Netwerkfout: ' + e.message); }
+  } catch (e) { const err = new Error(e.name === 'AbortError' ? 'Time-out: het model antwoordde niet binnen 4 minuten' : 'Netwerkfout: ' + e.message); err.herkansbaar = e.name !== 'AbortError'; throw err; }
   finally { clearTimeout(t); }
-  if (!r.ok) throw new Error(d.error || 'Fout ' + r.status); return d;
+  if (!r.ok) { const err = new Error(d.error || 'Fout ' + r.status); err.status = r.status; err.herkansbaar = r.status === 429 || r.status === 402 || r.status >= 500 || HERKANSBAAR.test(String(d.error||'')); throw err; }
+  return d;
+}
+/** roept de agent aan met exponentiële backoff bij tijdelijke fouten (credits/rate limit/overbelast) */
+async function callAgent(messages, json=true, opts={}) {
+  const maxPogingen = opts.pogingen || 4; let laatste;
+  for (let i = 0; i < maxPogingen; i++) {
+    try { return await callAgentOnce(messages, json, opts); }
+    catch (e) {
+      laatste = e; if (!e.herkansbaar || i === maxPogingen - 1) break;
+      const wacht = Math.round(2000 * Math.pow(2, i) * (0.75 + Math.random() * 0.5)); // 2s, 4s, 8s (+jitter)
+      if (opts.onWacht) opts.onWacht(wacht, i + 1, e.message);
+      await new Promise(res => setTimeout(res, wacht));
+    }
+  }
+  laatste.message = (laatste.herkansbaar ? `na ${maxPogingen} pogingen: ` : '') + laatste.message;
+  throw laatste;
 }
 function parseJSON(text) { try { return JSON.parse(text); } catch {} const m = String(text).match(/\{[\s\S]*\}/); if (m) { try { return JSON.parse(m[0]); } catch {} } throw new Error('Agent gaf geen geldige JSON terug'); }
 

@@ -20,7 +20,7 @@ async function ensureDossier() {
   C.setState(d.state);
 }
 async function start() {
-  const shared = await DB.getSetting('openrouter'); C.applySharedCfg(shared);
+  const shared = await DB.getShared(); C.applySharedCfg(shared);
   await ensureDossier(); await U.refreshProjecten();
   renderAll();
   if (!C.state.settings.wizardVoltooid) switchTab('eigenaar');

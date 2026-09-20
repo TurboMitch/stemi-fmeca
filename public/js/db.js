@@ -48,10 +48,23 @@ function setStatus(t, warn=false) { const el = $('#dbStatus'); if (el) { el.text
 // ---------- audit & AI-runs ----------
 async function logAudit(entry) { if (!dossier || !user) return; try { await sb.from('audit_log').insert({ dossier_id: dossier.id, user_id: user.id, username: profile?.username, ts: entry.ts, regel: entry.regel ?? null, veld: entry.veld ?? null, oud: entry.oud === undefined ? null : entry.oud, nieuw: entry.nieuw === undefined ? null : entry.nieuw, bron: entry.bron ?? null, model: entry.model ?? null, opmerking: entry.opmerking ?? null }); } catch (e) { console.warn('audit', e); } }
 async function logAiRun(run) { if (!dossier || !user) return; try { const { error } = await sb.from('ai_runs').insert({ dossier_id: dossier.id, user_id: user.id, regel: run.regel ?? null, taak: run.taak || 'specialist', model: run.model || null, input: run.input ?? null, output: run.output ?? null, usage: run.usage ?? null }); if (error) console.warn('ai_run', error); } catch (e) { console.warn('ai_run', e); } }
+async function aiRunsVan(regel) { const { data, error } = await sb.from('ai_runs').select('*').eq('dossier_id', dossier.id).eq('regel', regel).order('ts', { ascending: false }).limit(3); if (error) throw error; return data || []; }
 async function auditFromDb(limit=500) { const { data } = await sb.from('audit_log').select('*').eq('dossier_id', dossier.id).order('ts', { ascending: false }).limit(limit); return data || []; }
 
 // ---------- gedeelde instellingen (OpenRouter-sleutel, modellen, context) ----------
 async function getSetting(key) { const { data } = await sb.from('app_settings').select('value').eq('key', key).maybeSingle(); return data?.value || null; }
+const isAdmin = () => profile?.role === 'admin';
+/** gedeelde instellingen: modellen/context voor iedereen, API-sleutel alleen leesbaar voor beheerders */
+async function getShared() {
+  const pub = await getSetting('openrouter') || {};
+  let sec = null; if (isAdmin()) { try { sec = await getSetting('openrouter_secret'); } catch {} }
+  return { ...pub, apiKey: sec?.apiKey || '', sleutelBeheerdersOnly: !isAdmin() };
+}
+async function setShared(cfg) {
+  const { apiKey, sleutelBeheerdersOnly, ...pub } = cfg || {};
+  await setSetting('openrouter', pub);
+  if (isAdmin() && apiKey) await setSetting('openrouter_secret', { apiKey });
+}
 async function setSetting(key, value) { const { error } = await sb.from('app_settings').upsert({ key, value, updated_by: user.id, updated_at: new Date().toISOString() }); if (error) throw error; }
 
 // ---------- login UI ----------
@@ -60,5 +73,5 @@ function showLogin(onDone) {
   const form = $('#loginForm'); form.onsubmit = async e => { e.preventDefault(); const st = $('#loginStatus'); st.innerHTML = '<span class="spin"></span>inloggen…'; try { await login($('#loginUser').value, $('#loginPass').value); ov.classList.add('hidden'); onDone(); } catch (err) { st.innerHTML = `<span class="warn">${err.message}</span>`; } };
   setTimeout(() => $('#loginUser').focus(), 50);
 }
-return { sb, init, login, logout, token, get user(){return user}, get profile(){return profile}, get dossier(){return dossier}, listDossiers, openDossier, createDossier, renameDossier, duplicateDossier, deleteDossier, metaVan, persist, flush, logAudit, logAiRun, auditFromDb, getSetting, setSetting, showLogin, setStatus };
+return { sb, init, login, logout, token, get user(){return user}, get profile(){return profile}, get dossier(){return dossier}, listDossiers, openDossier, createDossier, renameDossier, duplicateDossier, deleteDossier, metaVan, persist, flush, logAudit, logAiRun, aiRunsVan, auditFromDb, getSetting, setSetting, getShared, setShared, get isAdmin(){return isAdmin()}, showLogin, setStatus };
 })();

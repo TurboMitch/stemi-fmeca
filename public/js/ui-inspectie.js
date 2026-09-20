@@ -68,13 +68,15 @@ function startLookup(name, aoa) {
 function applyLookup() {
   const S = C.state; const P = window.STEMI_PREP; if (lk.map._key == null) { C.toast('Kies de sleutelkolom in de koppeltabel'); return; }
   const stat = P.applyLookup(S.inspectie, lk, { key: lk.key, overschrijf: lk.overschrijf });
-  S.raw = S.raw || []; S.raw.push({ bestand: lk.name, ts: lk.ts, headers: lk.headers, rows: lk.rows.slice(0, 1000), map: lk.map, aantal: lk.rows.length, mode: 'koppeltabel', sleutel: lk.key, stat });
+  S.raw = S.raw || []; S.raw.push({ bestand: lk.name, ts: lk.ts, headers: lk.headers, rows: lk.rows.slice(0, 50), map: lk.map, aantal: lk.rows.length, mode: 'koppeltabel', sleutel: lk.key, stat });
   S.settings.koppelProfielen = S.settings.koppelProfielen || {}; const byName = {}; for (const k in lk.map) byName[k] = lk.headers[lk.map[k]]; S.settings.koppelProfielen[lk.name.replace(/\.[^.]+$/,'')] = { map: byName, key: lk.key, ts: lk.ts };
   C.audit({ veld:'inspectie.koppeltabel', bron:'mens', nieuw:`${lk.name}: ${stat.gematcht}/${S.inspectie.length} regels gekoppeld op ${lk.key}; ${stat.zonderKengetal} zonder kengetal > 0; niet gevonden: ${stat.nietGevonden.length}` });
   lk = null; C.save(); window.STEMI_UI.renderAll('inspectie'); if (queue.length) setTimeout(volgende, 300);
   C.toast(`Koppeltabel toegepast: ${stat.gematcht}/${S.inspectie.length} regels gekoppeld${stat.nietGevonden.length?`, ${stat.nietGevonden.length} sleutel(s) niet gevonden`:''}${stat.zonderKengetal?`, ${stat.zonderKengetal} zonder bruikbaar kengetal`:''}`, 8000);
 }
 function applyImport() {
+  const V = window.STEMI_PREP.valideerMapping(imp);
+  if (V.blokkades.length) { C.toast('Importeren geblokkeerd: ' + V.blokkades[0].tekst, 9000); renderMapping($('#tab-inspectie')); return; }
   const S = C.state; const map = imp.map; const startId = imp.mode === 'replace' ? 1 : Math.max(0, ...S.inspectie.map(x=>x.id)) + 1;
   const P = window.STEMI_PREP; const ctx = { projectNaam: [S.project?.object, S.project?.klant].filter(Boolean).join(' – ') || window.STEMI_DB?.dossier?.naam || 'Object' };
   const extraOn = imp.rules.some(r => r.id === 'extra' && r.aan); const usedCols = new Set(Object.values(map));
@@ -84,11 +86,11 @@ function applyImport() {
   S.settings.importProfielen = S.settings.importProfielen || {}; const prof = P.profielVan(imp); S.settings.importProfielen[prof.naam] = prof;
   const ids = new Set(); out.forEach(o => { while (ids.has(o.id)) o.id += 1000; ids.add(o.id); });
   if (imp.mode === 'replace') { S.inspectie = out; S.specialist = []; S.besluiten = []; S.maatregelen = []; S.ai = {}; } else S.inspectie.push(...out);
-  S.raw = S.raw || []; S.raw.push({ bestand: imp.name, ts: imp.ts, headers: imp.headers, rows: imp.rows.slice(0, 500), map, rules: imp.rules.map(r=>({id:r.id,aan:r.aan})), profiel: prof.naam, aantal: imp.rows.length, mode: imp.mode });
+  S.raw = S.raw || []; S.raw.push({ bestand: imp.name, ts: imp.ts, headers: imp.headers, rows: imp.rows.slice(0, 200), map, rules: imp.rules.map(r=>({id:r.id,aan:r.aan})), profiel: prof.naam, aantal: imp.rows.length, mode: imp.mode });
   C.audit({ veld:'inspectie.import', bron:'mens', nieuw:`${out.length} regels uit ${imp.name} (${imp.mode}); voorbewerking: ${imp.rules.filter(r=>r.aan&&!r.info).map(r=>r.id).join(', ')||'geen'}` });
   const n = out.length; imp = null; C.save(); window.STEMI_UI.renderAll('inspectie'); C.toast(`${n} regels geïmporteerd`);
   if (queue.length) { volgende(); return; }
-  if (C.cfg.autoAI && C.cfg.apiKey && confirm(`${n} regels geïmporteerd. Tab 03 nu door de AI laten invullen?`)) window.STEMI_UI.aiFillAll();
+  if (C.cfg.autoAI && confirm(`${n} regels geïmporteerd. Tab 03 nu door de AI laten invullen?`)) window.STEMI_UI.aiFillAll();
 }
 async function aiMap() {
   const st = $('#aiMapStatus'); st.innerHTML = '<span class="spin"></span>agent kijkt naar de kolommen…';
@@ -106,7 +108,8 @@ async function aiMap() {
 function qualityHtml(S) {
   const q = window.STEMI_PREP.quality(S.inspectie); const bar = it => `<td>${it.label}</td><td class="num">${it.ok}/${it.n}</td><td><div class="qbar"><div style="width:${Math.round(it.pct*100)}%" class="${it.pct>=0.9?'ok':it.pct>=0.5?'mid':'low'}"></div></div></td><td class="note">${it.rol}</td>`;
   const onb = Object.entries(q.onbekend).filter(([,v])=>v.length);
-  return `<details class="card" style="margin-top:12px" ${q.items.some(i=>i.pct<0.9)?'open':''}><summary><b>Datakwaliteit</b> <span class="note">– ${q.items.filter(i=>i.pct>=0.9).length}/${q.items.length} velden ≥ 90% gevuld${q.onzeker?` · ${q.onzeker} bibliotheekkoppeling(en) onzeker`:''}</span></summary>
+  const kritiek = q.items.filter(i=>i.pct<0.5 && /verplicht|nodig/.test(i.rol));
+  return `<details class="card ${kritiek.length?'blok':''}" style="margin:0 0 12px" ${q.items.some(i=>i.pct<0.9)?'open':''}><summary><b>Datakwaliteit</b> ${kritiek.length?`<span class="warn">– ${kritiek.length} veld(en) vrijwel leeg die de rekenkern nodig heeft: ${esc(kritiek.map(i=>i.label).join(', '))}</span>`:`<span class="note">– ${q.items.filter(i=>i.pct>=0.9).length}/${q.items.length} velden ≥ 90% gevuld${q.onzeker?` · ${q.onzeker} bibliotheekkoppeling(en) onzeker`:''}</span>`}</summary>
     <table class="mini" style="margin-top:6px"><tbody>${q.items.map(it=>`<tr>${bar(it)}</tr>`).join('')}</tbody></table>
     ${onb.length?`<p class="note warn">Niet-herkende waarden: ${onb.map(([k,v])=>`${k}: ${esc(v.join(', '))}`).join(' · ')}</p>`:''}
     <p class="note">Lege velden blokkeren niets: het O-/D-voorstel meldt welke input ontbreekt en de AI vult aan met lager vertrouwen. Aanvullen kan in deze tabel of via een nieuwe import (toevoegen).</p></details>`;
@@ -122,11 +125,11 @@ function render() {
       <div class="toolbar"><label class="btn" title="Eén of meer bestanden tegelijk: inspectie-export én kostentabel worden automatisch herkend">Bestand(en) (CSV / XLSX)<input type="file" id="rawFile" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xls" multiple hidden></label><button class="btn ghost" id="rawPaste">Plakken (tabel uit Excel/CSV)</button><label class="btn ghost" title="Tweede bestand koppelen op elementcode/NEN-code: kengetallen, maatregelen, prijspeil">Koppeltabel (kengetallen)<input type="file" id="lkFile" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xls" hidden></label><button class="btn ghost" id="addInsp">+ Lege regel</button><span class="spacer"></span><span class="note">${S.raw?.length ? `${S.raw.length} import(s) bewaard voor herleidbaarheid` : 'Nog geen ruwe import'}</span></div>
       <textarea id="rawText" class="hidden" rows="6" style="width:100%" placeholder="Plak hier een tabel met kopregel (tab- of ;-gescheiden)…"></textarea><div id="rawTextBtns" class="hidden toolbar"><button class="btn" id="rawTextGo">Kolommen koppelen →</button></div>
     </div>
+    ${S.inspectie.length ? qualityHtml(S) : ''}
     <div class="tablewrap"><table><thead><tr><th>ID</th>${cols.map(c=>`<th class="${c[2]==='wrap'?'wrap':''}">${c[1]}</th>`).join('')}<th>Omvang</th><th>Kosten element</th><th>Kosten lokaal</th><th>Begrotingswijze</th><th>1e voorstel</th><th class="wrap">Bibliotheek</th><th>Bron</th><th></th></tr></thead><tbody>
     ${S.inspectie.map(insp => { const r = C.calc.rows.find(x=>x.id===insp.id) || {}; return `<tr><td>${insp.id}</td>${cols.map(c=>{const v=insp[c[0]]??''; if(c[2]==='info') return `<td class="note" style="max-width:220px">${insp.kengetallen?`${esc(insp.kengetallen.keuze||'')}<br>V ${insp.kengetallen.vervangen??'–'} · H ${insp.kengetallen.herstellen??'–'} · R ${insp.kengetallen.reinigen??'–'} <span title="${esc(insp.kengetallen.bron||'')} r${insp.kengetallen.rij||''}">(${esc((insp.kengetallen.bron||'').replace(/\.[^.]+$/,''))})</span>`:(insp.kengetalBron?esc(insp.kengetalBron):'')}</td>`; if(c[2]==='sel') return `<td class="geel"><select data-insp="${insp.id}" data-k="${c[0]}"><option value=""></option>${c[3].map(o=>`<option ${o===v?'selected':''}>${o}</option>`).join('')}</select></td>`; if(c[2]==='wrap') return `<td class="geel"><textarea data-insp="${insp.id}" data-k="${c[0]}">${esc(v)}</textarea></td>`; return `<td class="geel"><input class="${c[2]==='n'?'n':''}" data-insp="${insp.id}" data-k="${c[0]}" value="${esc(v)}"></td>`;}).join('')}
       <td class="num groen">${pct(r.omvang)}</td><td class="num groen">${eur(r.kostenElement)}</td><td class="num groen">${eur(r.kostenLokaal)}</td><td class="groen">${r.begrotingswijze||''}</td><td class="num groen">${eur(r.eersteVoorstel)}</td><td class="wrap groen">${r.libE?`<b>${esc(r.libE.bouwdeel)}</b> · ${esc(r.libE.omschrijving)}${insp.nenMatch?` <span class="tag" title="score ${insp.nenMatch.score} · ${esc(insp.nenMatch.kandidaten?.[0]?.reden||'')}">match ${esc(insp.nenMatch.zeker)}</span>`:''}`:(insp.nenCode?'<span class="warn">code onbekend</span>':(insp.nenMatch?`<span class="warn">geen zekere match</span><div class="note">kandidaten: ${insp.nenMatch.kandidaten.map(k=>`<a href="#" data-pick="${insp.id}|${k.code}" title="${esc(k.omschrijving)} (${k.score})">${k.code}</a>`).join(', ')}</div>`:'<span class="note">geen code</span>'))}</td><td class="note">${insp._rawRef?`${esc(insp._rawRef.bestand)} r${insp._rawRef.rij}`:'handmatig/Excel'}</td><td><button class="btn ghost small" data-del="${insp.id}">✕</button></td></tr>`; }).join('')}
     </tbody></table></div>
-    ${S.inspectie.length ? qualityHtml(S) : ''}
     ${S.raw?.length ? `<details style="margin-top:10px"><summary>Ruwe imports (${S.raw.length})</summary>${S.raw.map(r=>`<div class="note">${esc(r.bestand)} · ${new Date(r.ts).toLocaleString('nl-NL')} · ${r.aantal} rijen · ${r.mode}${r.profiel?` · profiel ${esc(r.profiel)}`:''}${r.rules?` · voorbewerking: ${esc(r.rules.filter(x=>x.aan).map(x=>x.id).join(', ')||'geen')}`:''} · kolommen: ${esc(r.headers.join(' | '))}</div>`).join('')}</details>` : ''}`;
   $$('[data-insp]').forEach(i => i.onchange = () => { const insp=S.inspectie.find(x=>x.id===+i.dataset.insp); const k=i.dataset.k; const old=insp[k]; insp[k] = NUMF.includes(k) ? num(i.value) : i.value; C.audit({regel:insp.id, veld:'inspectie.'+k, oud:old, nieuw:insp[k], bron:'mens'}); C.save(); window.STEMI_UI.renderAll('inspectie'); });
   $('#addInsp').onclick = () => { const id = Math.max(0,...S.inspectie.map(x=>x.id))+1; S.inspectie.push({id, object: S.inspectie[0]?.object||'Object', element:'Nieuw element'}); C.save(); window.STEMI_UI.renderAll('inspectie'); };
@@ -149,8 +152,12 @@ function render() {
   $('#rawTextGo').onclick = () => { const t=$('#rawText').value; if(!t.trim()) return; startImport('geplakt-'+new Date().toISOString().slice(0,16), parseText(t)); };
 }
 function renderMapping(el) {
+  const V = window.STEMI_PREP.valideerMapping(imp);
   el.innerHTML = `<h2>02 Inspectie – kolommen koppelen</h2><p class="sub">Bestand <b>${esc(imp.name)}</b> · ${imp.rows.length} rijen · ${imp.headers.length} kolommen. Automatische koppeling op kolomnaam; pas aan waar nodig. De ruwe rijen blijven bewaard (herleidbaarheid).</p>
-    <div class="toolbar"><button class="btn ghost" id="aiMap">AI: koppeling voorstellen</button><span id="aiMapStatus" class="note"></span><span class="spacer"></span><label class="note"><input type="radio" name="impMode" value="append" ${imp.mode==='append'?'checked':''}> toevoegen</label><label class="note"><input type="radio" name="impMode" value="replace" ${imp.mode==='replace'?'checked':''}> vervangen (wist tab 03/besluiten)</label><button class="btn" id="impGo">Importeren</button><button class="btn ghost" id="impCancel">Annuleren</button></div>
+    <div class="toolbar"><button class="btn ghost" id="aiMap">AI: koppeling voorstellen</button><span id="aiMapStatus" class="note"></span><span class="spacer"></span><label class="note"><input type="radio" name="impMode" value="append" ${imp.mode==='append'?'checked':''}> toevoegen</label><label class="note"><input type="radio" name="impMode" value="replace" ${imp.mode==='replace'?'checked':''}> vervangen (wist tab 03/besluiten)</label><button class="btn" id="impGo" ${V.blokkades.length?'disabled title="los eerst de blokkerende punten op"':''}>Importeren</button><button class="btn ghost" id="impCancel">Annuleren</button></div>
+    ${V.blokkades.length?`<div class="card blok"><b class="warn">Importeren geblokkeerd – ${V.blokkades.length} punt(en) moeten eerst opgelost worden</b><ul>${V.blokkades.map(b=>`<li>${esc(b.tekst)}</li>`).join('')}</ul></div>`:''}
+    ${V.waarschuwingen.length?`<details class="card" ${V.blokkades.length?'':'open'}><summary><b>${V.waarschuwingen.length} waarschuwing(en)</b> <span class="note">– importeren mag, maar controleer dit eerst</span></summary><ul class="note">${V.waarschuwingen.map(w=>`<li>${esc(w.tekst)}</li>`).join('')}</ul></details>`:''}
+    ${!V.blokkades.length&&!V.waarschuwingen.length?`<div class="card note">Kolomkoppeling gecontroleerd: geen dubbele koppelingen, alle getalvelden bevatten getallen, verplichte en belangrijke velden zijn gekoppeld.</div>`:''}
     ${queue.length?`<div class="card note">Na deze import volgt automatisch: ${esc(queue.map(q=>q.name).join(', '))}.</div>`:''}
     ${imp.profielToegepast?`<div class="card note">Importprofiel <b>${esc(imp.profielNaam)}</b> herkend en toegepast (kolommen + voorbewerkingsregels van een eerdere import).</div>`:''}
     ${imp.aiOpm?.length?`<div class="card note">${imp.aiOpm.map(o=>`• ${esc(o)}`).join('<br>')}</div>`:''}
@@ -158,14 +165,14 @@ function renderMapping(el) {
       ${imp.rules.length?`<table class="mini" style="margin-top:6px"><tbody>${imp.rules.map(r=>`<tr><td style="width:24px">${r.info?'ℹ':`<input type="checkbox" data-rule="${r.id}" ${r.aan?'checked':''}>`}</td><td><b>${esc(r.titel)}</b><div class="note">${esc(r.uitleg)}</div></td></tr>`).join('')}</tbody></table>`:'<p class="note">Geen bijzonderheden gevonden; de data past direct op de standaardvelden.</p>'}
     </div>
     <div class="grid two"><div class="card"><table class="mini"><thead><tr><th>Standaardveld</th><th>Bronkolom</th><th>Voorbeeld</th></tr></thead><tbody>
-    ${FIELDS.map(([k,l])=>`<tr><td>${l}</td><td><select data-map="${k}"><option value="">— niet koppelen —</option>${imp.headers.map((h,i)=>`<option value="${i}" ${imp.map[k]===i?'selected':''}>${esc(h||('kolom '+(i+1)))}</option>`).join('')}</select></td><td class="note">${imp.map[k]!=null?esc(String(normValue(k, imp.rows[0]?.[imp.map[k]])??'')):''}</td></tr>`).join('')}
+    ${FIELDS.map(([k,l])=>{ const fout = V.blokkades.some(b=>b.velden.includes(k)); const waarsch = V.waarschuwingen.some(w=>w.veld===k); return `<tr class="${fout?'blokrij':waarsch?'waarschrij':''}"><td>${l}${fout?' <span class="warn">✕</span>':waarsch?' <span class="warn">!</span>':''}</td><td><select data-map="${k}"><option value="">— niet koppelen —</option>${imp.headers.map((h,i)=>`<option value="${i}" ${imp.map[k]===i?'selected':''}>${esc(h||('kolom '+(i+1)))}</option>`).join('')}</select></td><td class="note">${imp.map[k]!=null?esc(String(normValue(k, imp.rows[0]?.[imp.map[k]])??'')):''}</td></tr>`; }).join('')}
     </tbody></table></div>
     <div class="card"><b>Ruwe data (eerste 8 rijen)</b><div class="tablewrap" style="margin-top:8px"><table><thead><tr>${imp.headers.map((h,i)=>`<th>${esc(h||('kolom '+(i+1)))}</th>`).join('')}</tr></thead><tbody>${imp.rows.slice(0,8).map(r=>`<tr>${imp.headers.map((_,i)=>`<td>${esc(r[i]??'')}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div></div>`;
   $$('[data-map]').forEach(s => s.onchange = () => { if (s.value==='') delete imp.map[s.dataset.map]; else imp.map[s.dataset.map] = +s.value; const keep = Object.fromEntries(imp.rules.map(r=>[r.id,r.aan])); imp.rules = window.STEMI_PREP.detectRules(imp); imp.rules.forEach(r => { if (keep[r.id] != null) r.aan = keep[r.id]; }); renderMapping(el); });
   $$('[data-rule]').forEach(c => c.onchange = () => { const r = imp.rules.find(x => x.id === c.dataset.rule); if (r) r.aan = c.checked; });
   $$('[name=impMode]').forEach(r => r.onchange = () => imp.mode = r.value);
   $('#impGo').onclick = applyImport; $('#impCancel').onclick = () => { imp=null; queue=[]; render(); };
-  $('#aiMap').onclick = () => { if(!C.cfg.apiKey){ C.toast('Vul eerst een OpenRouter-sleutel in (Instellingen)'); return; } aiMap(); };
+  $('#aiMap').onclick = () => aiMap();
 }
 function renderLookup(el) {
   const P = window.STEMI_PREP; const S = C.state; const keyVals = new Set(S.inspectie.map(r => String(r[lk.key] ?? '').trim().toUpperCase()).filter(Boolean));
