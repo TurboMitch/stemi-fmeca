@@ -273,17 +273,57 @@ function openInfo(btn) {
   setTimeout(() => document.addEventListener('mousedown', onDocDown, true), 0);
 }
 
+// ---------- filter en paginering: bij honderden regels wordt alles tegelijk tekenen te zwaar ----------
+const filter = { q: '', prio: '', status: '', bron: '', signaal: false };
+let pagina = 0;
+const perPagina = () => C.cfg.spPerPagina ?? 50;
+function gefilterd() {
+  const q = filter.q.trim().toLowerCase();
+  return C.calc.rows.filter(r => {
+    if (filter.prio && r.prio !== filter.prio) return false;
+    if (filter.status === 'compleet' && r.status !== 'Compleet') return false;
+    if (filter.status === 'aanvullen' && r.status === 'Compleet') return false;
+    if (filter.bron && r.aiStatus !== filter.bron) return false;
+    if (filter.signaal && !flagsVan(r.id).length && !injectieSignalen[r.id]) return false;
+    if (q) { const t = `${r.id} ${r.insp.element || ''} ${r.insp.constatering || ''} ${r.faalwijze || ''} ${r.insp.nenCode || ''} ${r.sp.maatregel || ''}`.toLowerCase(); if (!t.includes(q)) return false; }
+    return true;
+  });
+}
+const filterActief = () => !!(filter.q || filter.prio || filter.status || filter.bron || filter.signaal);
+function filterHtml(zicht, totaal) {
+  const pp = perPagina(), paginas = pp === 0 ? 1 : Math.max(1, Math.ceil(zicht / pp));
+  return `<div class="toolbar">
+    <input id="spQ" placeholder="zoek in element, constatering, faalwijze, code of maatregel" value="${esc(filter.q)}" style="min-width:300px">
+    <select id="spPrio"><option value="">alle prioriteiten</option>${C.PRIOS.map(p => `<option ${p === filter.prio ? 'selected' : ''}>${p}</option>`).join('')}</select>
+    <select id="spStatus"><option value="">alle statussen</option><option value="aanvullen" ${filter.status === 'aanvullen' ? 'selected' : ''}>nog aanvullen</option><option value="compleet" ${filter.status === 'compleet' ? 'selected' : ''}>compleet</option></select>
+    <select id="spBron"><option value="">alle herkomsten</option>${['Systeemvoorstel','Uit Excel','AI ingevuld','Mens gecontroleerd'].map(b => `<option ${b === filter.bron ? 'selected' : ''}>${b}</option>`).join('')}</select>
+    <label class="note"><input type="checkbox" id="spSig" ${filter.signaal ? 'checked' : ''}> alleen met signaal of geweigerde waarde</label>
+    ${filterActief() ? '<button class="btn ghost small" id="spReset">filter wissen</button>' : ''}
+    <span class="spacer"></span>
+    <label class="note">Per pagina <select id="spPP">${[25, 50, 100, 250].map(n => `<option ${n === pp ? 'selected' : ''}>${n}</option>`).join('')}<option value="0" ${pp === 0 ? 'selected' : ''}>alles</option></select></label>
+    ${paginas > 1 ? `<button class="btn ghost small" id="spVorige" ${pagina === 0 ? 'disabled' : ''}>◀</button>
+      <span class="note">pagina <select id="spPag">${Array.from({ length: paginas }, (_, i) => `<option value="${i}" ${i === pagina ? 'selected' : ''}>${i + 1}</option>`).join('')}</select> van ${paginas}</span>
+      <button class="btn ghost small" id="spVolgende" ${pagina >= paginas - 1 ? 'disabled' : ''}>▶</button>` : ''}
+    <span class="note">${zicht === totaal ? `${totaal} regels` : `<b>${zicht}</b> van ${totaal} regels`}</span></div>`;
+}
+
 function render() {
-  const el = $('#tab-specialist'); const R = C.calc.rows; const nAI = R.filter(r=>C.state.ai[r.id]).length; const nMens = R.filter(r=>Object.values(r.sp.prov||{}).some(p=>p.bron==='mens')).length;
+  const el = $('#tab-specialist'); const alles = C.calc.rows;
+  const nAI = alles.filter(r=>C.state.ai[r.id]).length, nMens = alles.filter(r=>Object.values(r.sp.prov||{}).some(p=>p.bron==='mens')).length;
+  const zicht = gefilterd(); const pp = perPagina();
+  if (pp && pagina * pp >= zicht.length) pagina = Math.max(0, Math.ceil(zicht.length / pp) - 1);
+  const R = pp ? zicht.slice(pagina * pp, pagina * pp + pp) : zicht;
   el.innerHTML = `
     <h2>03 Technisch specialist / ME <span class="ai-badge">AI-laag</span></h2><p class="sub">De AI vult op basis van tab 02 en de gebrekenbibliotheek álle velden in, verifieert bestaande waarden en overschrijft waar nodig – altijd met onderbouwing. De specialist controleert en corrigeert; elke waarde heeft een herkomst. <span class="prov inl sys">sys</span> systeemvoorstel · <span class="prov inl ai">AI</span> · <span class="prov inl mens">Mens</span> · <span class="prov inl xl">Excel</span></p>
     ${injectieHtml()}
+    ${filterHtml(zicht.length, alles.length)}
     <div class="toolbar">
       <button class="btn" id="aiAll">AI: alle regels invullen &amp; verifiëren</button>
       <button class="btn ghost" id="aiNew">Alleen nieuwe regels</button>
       <label class="note"><input type="checkbox" id="aiOverschrijf"> menselijke invoer mag overschreven worden</label>
       <button class="btn ghost" id="aiChat">Vraag de agent</button>
       ${laatsteMislukt.length?`<button class="btn ghost" id="aiRetry" title="alleen de regels die faalden opnieuw proberen">Mislukte regels opnieuw (${laatsteMislukt.length})</button>`:''}
+      ${filterActief() ? `<button class="btn ghost" id="aiSel" title="alleen de regels die nu door het filter komen">AI: deze selectie (${zicht.length})</button>` : ''}
       <button class="btn ghost" id="refBulk" title="alle door een mens gecontroleerde regels vastleggen als maatstaf voor de AI">Referentieset bijwerken</button>
       <span class="spacer"></span>
       <span class="note">${nAI}/${R.length} door AI · ${nMens} met menselijke correctie${flagsTotaal()?` · <span class="warn">${flagsTotaal()} waarde(n) niet overgenomen na controle</span>`:''}${signalenTotaal()?` · <span class="oranje">${signalenTotaal()} gesignaleerd ter controle</span>`:''} · model <b>${esc(C.modelFor('specialist'))}</b></span>
@@ -314,6 +354,18 @@ function render() {
   $('#aiAll').onclick = () => aiFillAll({overschrijf: $('#aiOverschrijf').checked});
   $('#aiNew').onclick = () => aiFillAll({alleenNieuw:true, overschrijf: $('#aiOverschrijf').checked});
   $('#aiChat').onclick = openChat;
+  const zet = (k, v) => { filter[k] = v; pagina = 0; render(); };
+  $('#spQ').oninput = e => { clearTimeout(window._spq); const v = e.target.value; window._spq = setTimeout(() => zet('q', v), 300); };
+  $('#spPrio').onchange = e => zet('prio', e.target.value);
+  $('#spStatus').onchange = e => zet('status', e.target.value);
+  $('#spBron').onchange = e => zet('bron', e.target.value);
+  $('#spSig').onchange = e => zet('signaal', e.target.checked);
+  const rst = $('#spReset'); if (rst) rst.onclick = () => { Object.assign(filter, { q: '', prio: '', status: '', bron: '', signaal: false }); pagina = 0; render(); };
+  $('#spPP').onchange = e => { C.cfg.spPerPagina = +e.target.value; C.saveCfg(); pagina = 0; render(); };
+  const pv = $('#spVorige'); if (pv) pv.onclick = () => { pagina = Math.max(0, pagina - 1); render(); };
+  const pn = $('#spVolgende'); if (pn) pn.onclick = () => { pagina++; render(); };
+  const ps = $('#spPag'); if (ps) ps.onchange = e => { pagina = +e.target.value; render(); };
+  const asel = $('#aiSel'); if (asel) asel.onclick = () => { if (confirm(`De AI ${zicht.length} gefilterde regel(s) laten invullen en verifiëren?`)) aiFillAll({ ids: zicht.map(r => r.id), overschrijf: $('#aiOverschrijf').checked }); };
   $('#refBulk').onclick = () => referentieBijwerken().catch(e => C.toast('Mislukt: ' + e.message, 7000));
   const rt = $('#aiRetry'); if (rt) rt.onclick = () => aiFillAll({ ids: laatsteMislukt.slice(), overschrijf: $('#aiOverschrijf').checked });
   $('#showSys').onchange = e => { C.cfg.showSys = e.target.checked; C.saveCfg(); render(); };

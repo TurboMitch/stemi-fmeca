@@ -36,18 +36,28 @@ function renderOverzicht() {
 }
 
 // ---------- 04 Systeemmodel ----------
+const KAP = 250;   // langere tabellen tekenen we niet in één keer: dat maakt een groot project onbruikbaar
+const kapAlles = {};
+function kapHtml(sleutel, totaal, getoond) {
+  if (totaal <= KAP) return '';
+  return `<p class="note" style="margin-top:8px">${getoond} van ${totaal} regels getoond. <button class="btn ghost small" data-kap="${sleutel}">${kapAlles[sleutel] ? `alleen de eerste ${KAP} tonen` : `alle ${totaal} tonen (kan traag zijn)`}</button></p>`;
+}
+const systeemRijen = () => kapAlles.sys ? C.calc.rows : C.calc.rows.slice(0, KAP);
+
 function renderSysteem() {
   const S = C.state.settings, R = S.rules;
   $('#tab-systeem').innerHTML = `
     <h2>04 Systeemmodel</h2><p class="sub">De rekenkern: technisch risico blijft zichtbaar naast waardegestuurd risico; overrides en tijd bepalen de definitieve prioriteit. Alle grenswaarden komen uit het instellingenprofiel <b>${esc(S.naam)}</b> (AM-wizard stap 2).</p>
     <div class="tablewrap"><table><thead><tr><th>ID</th><th>Element</th><th>O</th><th>D</th><th>T</th>${ASP_SHORT.map(a=>`<th>E ${a}</th>`).join('')}${ASP_SHORT.map(a=>`<th>W ${a}</th>`).join('')}<th>S tech</th><th>RPN tech</th><th>S waarde</th><th>RPN waarde</th><th>Basis</th><th>Safety</th><th>Compl.</th><th>T-prio</th><th>NEN signaal</th><th>Definitief</th><th>Uiterlijk</th><th>Deadline</th><th>Dominant tech</th><th>Dominant waarde</th><th>Kosten</th><th>Bron</th><th>Status</th></tr></thead><tbody>
-    ${C.calc.rows.map(r=>`<tr><td>${r.id}</td><td>${esc(r.insp.element)}</td><td class="num">${r.O??''}</td><td class="num">${r.D??''}</td><td class="num">${r.Tjaar??''}</td>${r.effect.map(e=>`<td class="num">${e}</td>`).join('')}${r.impact.map(e=>`<td class="num groen">${+e.toFixed(1)}</td>`).join('')}<td class="num">${r.Stech}</td><td class="num">${r.RPNtech??''}</td><td class="num">${+r.Swaarde.toFixed(1)}</td><td class="num"><b>${r.RPNwaarde==null?'':Math.round(r.RPNwaarde)}</b></td><td>${pill(r.basis)}</td><td>${pill(r.safety)}</td><td>${pill(r.compliance)}</td><td>${pill(r.tPrio)}</td><td class="wrap">${r.nenSignaal?'<span class="warn">Expliciete beoordeling</span>':''}</td><td>${pill(r.prio)}</td><td>${r.laatsteJaar??'—'}</td><td>${r.deadline??'—'}</td><td>${esc(r.domTech)}</td><td>${esc(r.domWaarde)}</td><td class="num">${eur(r.definitieveKosten)}</td><td>${r.kostenbron}</td><td>${r.status}</td></tr>`).join('')}
+    ${systeemRijen().map(r=>`<tr><td>${r.id}</td><td>${esc(r.insp.element)}</td><td class="num">${r.O??''}</td><td class="num">${r.D??''}</td><td class="num">${r.Tjaar??''}</td>${r.effect.map(e=>`<td class="num">${e}</td>`).join('')}${r.impact.map(e=>`<td class="num groen">${+e.toFixed(1)}</td>`).join('')}<td class="num">${r.Stech}</td><td class="num">${r.RPNtech??''}</td><td class="num">${+r.Swaarde.toFixed(1)}</td><td class="num"><b>${r.RPNwaarde==null?'':Math.round(r.RPNwaarde)}</b></td><td>${pill(r.basis)}</td><td>${pill(r.safety)}</td><td>${pill(r.compliance)}</td><td>${pill(r.tPrio)}</td><td class="wrap">${r.nenSignaal?'<span class="warn">Expliciete beoordeling</span>':''}</td><td>${pill(r.prio)}</td><td>${r.laatsteJaar??'—'}</td><td>${r.deadline??'—'}</td><td>${esc(r.domTech)}</td><td>${esc(r.domWaarde)}</td><td class="num">${eur(r.definitieveKosten)}</td><td>${r.kostenbron}</td><td>${r.status}</td></tr>`).join('')}
     </tbody></table></div>
+    ${kapHtml('sys', C.calc.rows.length, systeemRijen().length)}
     ${conditieHtml()}
     <h3>Actieve beslisregels</h3>
     <div class="grid two"><div class="card"><b>RPN waarde → basisprioriteit</b><br>${R.rpn.map(x=>`${x.prio} ≥ ${x.min}`).join(' · ')} · anders P5<br><br><b>Safety-override</b> (effect Veiligheid): ${R.safety.map(x=>`${x.prio} ≥ ${x.min}`).join(' · ')}<br><b>Compliance-override</b>: ${R.compliance.map(x=>`${x.prio} ≥ ${x.min}`).join(' · ')}</div>
     <div class="card"><b>T-prioriteit</b>: ${R.tPrio.map(x=>`${x.prio} ≤ ${x.max} jr`).join(' · ')} · anders P5<br><b>Definitief</b> = strengste van basis, safety, compliance, T.<br><b>Laatste acceptabele jaar</b>: ${C.PRIOS.map(p=>`${p} ${R.laatsteJaar[p]==null?'—':'+'+R.laatsteJaar[p]}`).join(' · ')}.<br><b>Technische deadline</b> = start + ⌈T⌉. <button class="btn ghost small" data-go="eigenaar">Aanpassen in wizard</button></div></div>`;
   $$('[data-go]').forEach(b => b.onclick = () => window.STEMI_UI.switchTab(b.dataset.go));
+  $$('[data-kap]').forEach(b => b.onclick = () => { kapAlles[b.dataset.kap] = !kapAlles[b.dataset.kap]; renderSysteem(); });
   const cn = $('#cpN'); if (cn) cn.onchange = e => { C.cfg.prognoseJaren = +e.target.value; C.saveCfg(); renderSysteem(); };
 }
 
@@ -151,6 +161,10 @@ function renderInstellingen() {
         <p class="note">Alle invoer, AI-voorstellen, herkomst per veld en de wijzigingshistorie (${C.state.audit.length} regels) staan lokaal in deze browser. Exporteer regelmatig.</p>
         <button class="btn ghost" id="dlJson">Volledige dataset (JSON)</button> <label class="btn ghost">JSON laden<input type="file" id="upJson" accept=".json" hidden></label> <button class="btn ghost" id="dlAudit">Audittrail (CSV)</button>
         <h3>Instellingenprofiel</h3><p class="note">Rekenregels, scorekaarten, profielbibliotheek en parameters beheer je in de AM-wizard (tab 01). Huidig: <b>${esc(S.naam)}</b>.</p><button class="btn ghost" data-go="eigenaar">Naar de wizard</button>
+        <h3>Klantsjabloon</h3>
+        <p class="note">Alles wat je voor een volgende klant wilt hergebruiken in één bestand: het instellingenprofiel met scorekaarten en beslisregels, de T-regels en levensduren per bouwdeel, de import- en koppelprofielen van je Excel-exports, de bibliotheekoverrides, de huisstijl van het rapport en de AI-context. Geen projectdata. Bij een nieuw project kies je dit bestand als startpunt.</p>
+        <p class="note">Dit sjabloon bevat nu: ${Object.keys(S.importProfielen||{}).length} importprofiel(en), ${Object.keys(S.koppelProfielen||{}).length} koppelprofiel(en), ${Object.keys(S.libOverrides||{}).length} bibliotheekoverride(s), ${Object.keys(S.rules?.tRegels?.levensduur||{}).length} bouwdelen met levensduur.</p>
+        <button class="btn ghost" id="sjabDown">Klantsjabloon downloaden</button> <label class="btn ghost">Sjabloon toepassen<input type="file" id="sjabUp" accept=".json" hidden></label>
       </div>
     </div>
     <h3>10 Gebrekenbibliotheek – standaardwaarden (NEN 2767-2:2025 + organisatie-eigen effectvoorstellen)</h3>
@@ -172,6 +186,12 @@ function renderInstellingen() {
   $('#cfgModels').onclick = fetchModels;
   $('#modelQ').value = modelQ; $('#modelQ').oninput = e => { modelQ = e.target.value; clearTimeout(window._mq); window._mq = setTimeout(() => { $$('[data-model]').forEach(s => { const cur = s.value; s.innerHTML = modelOptions(cur); }); }, 200); };
   $('#cfgTest').onclick = async () => { $('#cfgSave').click(); const out=$('#cfgTestOut'); out.innerHTML='<span class="spin"></span>testen…'; try { const r = await C.callAgent([{role:'user',content:'Antwoord met JSON {"ok":true}'}], true); out.textContent = 'OK – ' + (r.model||''); } catch(e) { out.innerHTML = `<span class="warn">${esc(e.message)}</span>`; } };
+  $('#sjabDown').onclick = () => { const sj = C.sjabloonVan(); download(`stemi-klantsjabloon-${(sj.naam||'profiel').replace(/\W+/g,'_')}.json`, JSON.stringify(sj, null, 1), 'application/json'); };
+  $('#sjabUp').onchange = e => { const f = e.target.files[0]; if (!f) return; f.text().then(t => {
+      const sj = JSON.parse(t);
+      if (!confirm(`Sjabloon "${sj.naam || '?'}" van ${(sj.gemaakt||'').slice(0,10)} toepassen op dit project?\n\nHet instellingenprofiel, de T-regels, de import- en koppelprofielen, de huisstijl en de AI-context worden overschreven. De inspectiedata en de specialistbeoordeling blijven ongemoeid.`)) return;
+      C.pasSjabloonToe(sj); window.STEMI_UI.renderAll(); C.toast('Klantsjabloon toegepast', 5000);
+    }).catch(err => alert('Ongeldig sjabloon: ' + err.message)); };
   $('#dlJson').onclick = () => download('stemi-fmeca-dataset.json', JSON.stringify(C.state,null,1), 'application/json');
   $('#upJson').onchange = e => { const f=e.target.files[0]; if(!f) return; f.text().then(t=>{ const st = JSON.parse(t); if(!st.inspectie) throw new Error('geen dataset'); C.state = st.versie===2 ? st : (window.STEMI.emptyState(), st); C.save(); window.STEMI_UI.renderAll(); C.toast('Dataset geladen'); }).catch(err=>alert('Ongeldig bestand: '+err.message)); };
   $('#dlAudit').onclick = () => { const rows=[['tijd','regel','veld','oud','nieuw','bron','model','opmerking']].concat(C.state.audit.map(a=>[a.ts,a.regel??'',a.veld??'',JSON.stringify(a.oud??''),JSON.stringify(a.nieuw??''),a.bron??'',a.model??'',a.opmerking??''])); download('stemi-audittrail.csv', rows.map(r=>r.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(';')).join('\n'), 'text/csv'); };
@@ -188,18 +208,101 @@ function download(name, text, type) { const a=document.createElement('a'); a.hre
 function renderUitleg() {
   const W = C.seed.woordenlijst||[], Rl = C.seed.rollen||[];
   $('#tab-uitleg').innerHTML = `
-    <h2>Uitleg</h2><p class="sub">Leeswijzer, rollen & inputmomenten (08) en woordenlijst (07).</p>
-    <div class="card"><h3 style="margin-top:0">Leeswijzer</h3><p>NEN 2767 → FMECA → NEN 8026 waardekompas → risico & tijd → MJOP.</p>
-    <ol><li><b>Eigenaar / assetmanager</b> (paars/blauw) – legt via de wizard het instellingenprofiel vast: profielbibliotheek (09), scorekaarten & beslisregels (06), objectparameters (01). Neemt later MJOP-besluiten.</li><li><b>NEN 2767-inspecteur</b> (geel) – levert objectieve technische evidence als data (ruw of gestandaardiseerd) in 02.</li><li><b>Technisch specialist / ME</b> (oranje) – in 03 vult de AI alle velden (faalwijze, O, D, T, effecten, maatregel, restrisico, kosten) op basis van 02 en de gebrekenbibliotheek; verifieert en overschrijft onderbouwd; de specialist controleert. Elke waarde heeft een herkomst en historie.</li><li><b>Systeemmodel</b> (groen, 04) – rekenkern op het instellingenprofiel: technisch én waardegestuurd risico, overrides, T-prioriteit, definitieve prioriteit.</li><li><b>Assetmanager-besluit</b> (blauw) – maatregel, jaar, budget, acceptatie restrisico.</li><li><b>MJOP</b> (groen, 05) – handelingen met moment, kosten en cyclus over de horizon, op prijspeil; indexering, btw, contante waarde en budgetsturing rekent het model erbij.</li><li><b>Scenario's</b> (07) – dezelfde onderhoudsbehoefte onder verschillende beleidskeuzes: kosten, wat er met het risico gebeurt en hoe de technische staat zich ontwikkelt.</li><li><b>Rapport</b> (06) – het volledige klantrapport, met per maatregel de onderbouwing en de herkomst van elke waarde.</li></ol><h3 style="margin-top:14px">Hoe het faalmoment T tot stand komt</h3><p class="note">T is de verwachte tijd tot functieverlies en bepaalt de technische deadline en de T-prioriteit. Er zijn drie bronnen, in deze volgorde: (1) een <b>vaste regel per gebrekcode</b> in het instellingenprofiel; (2) het <b>restlevensduurmodel</b>: T = levensduur van de bouwdeelcategorie × restfactor van de degradatiecurve ÷ ontwikkelsnelheid × ernstfactor × omvangfactor, begrensd op de resterende technische levensduur en op de horizon; (3) <b>de specialist</b>, die het voorstel overneemt of onderbouwd afwijkt. De degradatiegraad komt uit de NEN-intensiteit met de conditiescore als kruiscontrole: de verst gevorderde van de twee telt. Alle coëfficiënten staan in de wizard (stap 3), zodat de methodiek beleid van de organisatie blijft en geen vaste aanname van de software.</p><h3 style="margin-top:14px">Wie ziet wat</h3>
-       <p class="note">Toegang loopt <b>per project</b>. Wie geen lid is van een project, ziet dat project niet — ook zijn audittrail, AI-runs en back-ups niet; de database bewaakt dat zelf en niet de browser. Binnen een project zijn er drie rollen: <b>eigenaar</b> (beheert leden, kan het project naar de prullenbak doen en terugzetten), <b>redacteur</b> (vult in en wijzigt) en <b>lezer</b> (kijkt mee). Daarnaast is er de rol <b>beheerder</b> van STEMI zelf: die ziet alle projecten, beheert de API-sleutel, de foutmeldingen en de back-ups. Verwijderen gaat via de prullenbak, zodat een project met zijn hele historie terug te zetten is; definitief wissen kan alleen de eigenaar of een beheerder, met bevestiging van de projectnaam.</p>
-       <h3>Conditieprognose</h3><p class="note">De NEN 2767-conditie loopt van de huidige score naar 6 op het faalmoment T. Een handeling zet de conditie terug — vervangen naar 1, herstellen naar 2, reinigen of conserveren een stap — waarna de degradatie opnieuw begint over de levensduur van het bouwdeel. Tab 04 zet het geplande onderhoud tegenover niets doen; dat maakt zichtbaar wat uitstellen technisch betekent en niet alleen financieel.</p></div>
-    <h3>08 Rollen, inputmomenten en verantwoordelijkheden</h3>
+    <h2>Handleiding &amp; uitleg</h2><p class="sub">Van inspectiebestand naar onderbouwd MJOP, in de volgorde waarin je het doet. Onderaan staan de rollen, de begrippenlijst en de veelgestelde vragen.</p>
+    <div class="toolbar"><button class="btn ghost" id="uitPrint">Handleiding printen</button><span class="note">Nieuw bij STEMI? Werk stap 0 t/m 7 één keer door met het voorbeeldproject; dat duurt een half uur en daarna weet je hoe het model denkt.</span></div>
+
+    <div class="card"><h3 style="margin-top:0">In één alinea</h3>
+      <p>Een NEN 2767-inspectie zegt wat er kapot is. Dit model zet daar drie dingen bij: <b>wat het betekent</b> als het faalt (effect per waardeaspect, gewogen met het waardekompas van de eigenaar), <b>hoe waarschijnlijk en hoe zichtbaar</b> dat is (O en D), en <b>wanneer</b> het gebeurt (T, uit de restlevensduur). Daaruit rolt een prioriteit, een uiterste uitvoeringsjaar en een bedrag — en dat wordt het MJOP. Elke waarde houdt bij waar hij vandaan komt, dus je kunt bij elk bedrag in het rapport terug naar de inspecteur, de specialist, het AI-voorstel of de systeemregel die hem heeft veroorzaakt.</p></div>
+
+    <h3>Stap 0 · Project aanmaken</h3>
+    <div class="card"><p>Projecten-tab → <b>Nieuw project</b>. Kies een startpunt:</p>
+      <ul><li><b>Klantsjabloon</b> — je hebt al eens een klant ingericht en dat bestand in Instellingen gedownload: alle instellingen, import- en koppelprofielen, T-regels en huisstijl komen mee. Snelste route.</li>
+      <li><b>Instellingenprofiel kopiëren</b> van een bestaand project — zelfde idee, maar vanuit een project in de app.</li>
+      <li><b>Leeg</b> — dan doorloop je de wizard helemaal.</li>
+      <li><b>Voorbeelddata</b> — om te leren hoe het werkt zonder klantdata aan te raken.</li></ul>
+      <p class="note">Je wordt eigenaar van het project. Wie er nog bij mag regel je onder <b>Leden…</b>: redacteur mag invullen en wijzigen, lezer kijkt alleen mee. Wie geen lid is, ziet het project helemaal niet — ook zijn audittrail en AI-runs niet.</p></div>
+
+    <h3>Stap 1 · Kaders vastleggen (tab 01, de assetmanager)</h3>
+    <div class="card"><p>Vijf stappen in de wizard. Dit is <b>beleid</b>, geen techniek: het bepaalt hoe het model weegt.</p>
+      <ol><li><b>Profielbibliotheek</b> — de waardeaspecten en per objecttype hoe zwaar ze wegen. Voeg eigen aspecten toe als je die nodig hebt; alle afhankelijke tabellen groeien mee.</li>
+      <li><b>Scorekaarten en beslisregels</b> — wat O 1 t/m 10 betekent, wat D betekent, en bij welke RPN-waarde iets P1 wordt. Ook de overrides: een effect van 9 op veiligheid is altijd P1, ongeacht de rekensom.</li>
+      <li><b>T-bepaling en conditie</b> — levensduur en degradatiecurve per bouwdeelcategorie, en wat een handeling met de conditie doet. Let op de melding welke bouwdeelnamen uit jouw project nog niet in de levensduurtabel staan.</li>
+      <li><b>Objectparameters</b> — startjaar, horizon, omslagpercentage, en de financiële kant: prijspeil, inflatie, btw, discontovoet, budgetplafond.</li>
+      <li><b>Samenvatting</b> — nalezen en vastleggen.</li></ol>
+      <p class="note">Doe dit vóór de import. Alles wat je hier zet, rekent daarna automatisch door in tab 03, 04, 05 en het rapport.</p></div>
+
+    <h3>Stap 2 · Inspectiedata importeren (tab 02)</h3>
+    <div class="card"><p>Sleep het inspectiebestand én de kostentabel er in één keer in — het model herkent zelf welk bestand wat is. Daarna het mappingscherm:</p>
+      <ul><li><b>Rode blokkades</b> moet je oplossen: dezelfde kolom aan twee velden gekoppeld, tekst op een getalveld, of een verplicht veld leeg. Precies hier ging het bij de eerste echte klantexport mis (een eenheidkolom als hoeveelheid), met een MJOP van € 23 miljoen als gevolg.</li>
+      <li><b>Automatische regels</b> zetten omvangpercentages om naar hoeveelheden, leiden de NEN-intensiteit en de gebrekklasse af uit de gebrekcode, en zoeken de bijbehorende bibliotheekcode. Onzekere matches krijg je als aanklikbare kandidaten.</li>
+      <li><b>Koppeltabel</b> met kengetallen wordt op elementcode gematcht; per gebrek kiest het model vervangen, herstellen of reinigen.</li>
+      <li><b>Datakwaliteitskaart</b> bovenaan zegt welke velden slecht gevuld zijn — en of er tekst in staat die op een instructie aan de AI lijkt.</li></ul>
+      <p class="note">Het importprofiel wordt onder de bestandsnaam bewaard, dus de volgende export van dezelfde klant mapt zichzelf.</p></div>
+
+    <h3>Stap 3 · Laten beoordelen en controleren (tab 03)</h3>
+    <div class="card"><p><b>AI: alle regels invullen &amp; verifiëren</b> laat de agent per regel faalwijze, O, D, T, de acht effectscores, de maatregel, het restrisico en de kosten voorstellen — elk met onderbouwing. Wat je daarna doet is het eigenlijke werk:</p>
+      <ul><li>Het <b>i-icoon</b> bij elk oranje veld toont de volledige herkomst: welke inspectievelden eraan ten grondslag liggen, welk systeemvoorstel eruit kwam, wat de AI ervan maakte en met welke onderbouwing, en wie het daarna heeft gewijzigd.</li>
+      <li><b>Geweigerde waarden</b> — de controle laat onmogelijke scores en bedragen zonder controleerbare basis niet door. Die staan in de drawer per regel.</li>
+      <li><b>Gesignaleerde waarden</b> — wél overgenomen, maar ze wijken af van het systeemvoorstel. Vooral bij T: wijkt de AI meer dan een factor 4 van het restlevensduurmodel af zonder technische reden, dan moet je ernaar kijken.</li>
+      <li><b>Filter en paginering</b> — zoek op element of code, filter op prioriteit, status, herkomst of "alleen met signaal". Met een filter actief kun je de AI ook op alleen die selectie laten lopen.</li>
+      <li><b>Referentieset bijwerken</b> — regels waarvan jij O, D en T zelf hebt vastgesteld, worden de maatstaf waaraan de AI-kwaliteit gemeten wordt.</li></ul>
+      <p class="note">Een AI-voorstel is een voorstel. De specialist blijft verantwoordelijk; het model maakt alleen zichtbaar waarop hij zijn oordeel baseert.</p></div>
+
+    <h3>Stap 4 · Het risicobeeld lezen (tab 04)</h3>
+    <div class="card"><p>Hier rekent het systeem, je vult niets in. Per regel zie je het technische risico náást het waardegestuurde, welke regel de prioriteit bepaalde (RPN, veiligheid, compliance of tijd), het uiterste jaar en de technische deadline. Onderaan de <b>conditieprognose</b>: hoe de NEN-conditie zich ontwikkelt met jouw plan tegenover niets doen. Dat is het antwoord op "wat gebeurt er als we het een paar jaar laten liggen" in techniek in plaats van in geld.</p></div>
+
+    <h3>Stap 5 · Plannen en op budget sturen (tab 05)</h3>
+    <div class="card"><p>Per element één of meer <b>handelingen</b>, elk met jaar, kosten en eventueel een cyclus. Kosten voer je in op prijspeil; geïndexeerd, inclusief btw en contant rekent het model erbij — schakel met de weergavekeuze.</p>
+      <p><b>Budgetsturing</b>: vul een plafond per jaar in en je krijgt een voorstel welke handelingen schuiven. Het laagste risico schuift eerst, cyclische handelingen blijven staan, en per verschuiving staat erbij of die voorbij het laatste acceptabele jaar of voorbij de technische deadline komt. Jaren die niet binnen het plafond te krijgen zijn, worden gemeld in plaats van stil weggerekend. Toepassen legt elke verschuiving in de audittrail vast.</p></div>
+
+    <h3>Stap 6 · Scenario's vergelijken (tab 07)</h3>
+    <div class="card"><p>Dezelfde onderhoudsbehoefte onder verschillende beleidskeuzes: welke prioriteiten je uitvoert, wanneer, en binnen welk plafond. Naast elkaar staan de kosten in drie weergaven, het piekjaar, hoeveel werk te laat komt, wat je bewust laat liggen met het risico dat daarbij hoort, en het conditiebeeld. Dit is het gesprek met de eigenaar: niet "het kost dit", maar "deze keuze kost dat en levert dit risico op".</p></div>
+
+    <h3>Stap 7 · Rapport (tab 06)</h3>
+    <div class="card"><p>Eén knop en het volledige klantrapport staat er: managementsamenvatting met kerncijfers en de belangrijkste bevindingen, uitgangspunten, risicobeeld, meerjarenplanning, conditieprognose, scenariovergelijking, onderbouwing per maatregel met herkomst, en bijlagen met de audittrail. <b>Printen</b> geeft een PDF (A4 staand, achtergrondkleuren aanzetten), en er is een download als Word om zelf tekst toe te voegen. De huisstijl — organisatie, logo, accentkleur, voettekst — staat in dezelfde tab.</p></div>
+
+    <h3>Onderhoud van het model zelf</h3>
+    <div class="card"><div class="grid two">
+      <div><p><b>AI-kwaliteit</b> — leg een referentieset van 30 tot 50 handmatig beoordeelde regels vast en laat modellen die opnieuw beoordelen. Je ziet per veld de afwijking en, belangrijker, hoe vaak het model op dezelfde prioriteit uitkomt. Met kosten per regel, zodat je een duurder model kunt afwegen tegen een betere uitkomst.</p>
+      <p><b>Gezondheid</b> (Instellingen) — fouten per soort over de laatste zeven dagen. Kijk hier na een AI-ronde.</p></div>
+      <div><p><b>Back-ups</b> — elke nacht automatisch, 30 dagen bewaard, per project terug te zetten via Projecten → Back-ups. Herstellen maakt eerst een back-up van de huidige toestand.</p>
+      <p><b>Prullenbak</b> — een verwijderd project houdt alle historie en is terug te zetten. Definitief wissen kan alleen de eigenaar, met bevestiging van de naam.</p></div></div></div>
+
+    <h3>Veelgestelde vragen</h3>
+    <div class="card"><table class="mini"><tbody>
+      <tr><td><b>De AI vult een bedrag niet in.</b></td><td>Dan is er geen controleerbare basis (hoeveelheid × kengetal) of het bedrag lag buiten de bandbreedte. Vul het kengetal aan in tab 02 of zet het bedrag zelf met een onderbouwing.</td></tr>
+      <tr><td><b>Een regel heeft geen T.</b></td><td>Het restlevensduurmodel heeft minstens een intensiteit of een conditiescore nodig, plus een bouwdeel met levensduur. De wizard (stap 3) meldt welke bouwdeelnamen nog ontbreken.</td></tr>
+      <tr><td><b>Het MJOP-totaal en de jaarverdeling lopen uiteen.</b></td><td>Regels zonder jaar vallen buiten de planning. Filter in tab 03 op "nog aanvullen" om te zien welke.</td></tr>
+      <tr><td><b>Een AI-ronde faalt halverwege.</b></td><td>Meestal credits of een overbelast model. De app probeert automatisch opnieuw; daarna staat er een knop "Mislukte regels opnieuw".</td></tr>
+      <tr><td><b>Ik zie een project niet meer.</b></td><td>Of je bent geen lid meer, of het staat in de prullenbak. Een beheerder ziet alles.</td></tr>
+      <tr><td><b>Kan de klant meekijken?</b></td><td>Ja: voeg hem als <b>lezer</b> toe aan één project. Hij ziet dan alleen dat project — nu nog wel alle tabbladen daarvan, inclusief de AI-onderbouwing.</td></tr>
+      <tr><td><b>Werkt het op een telefoon?</b></td><td>Lezen en lichte correcties gaan; de tabellen schuiven horizontaal met vaste koppen en een vaste eerste kolom. Een volledige inspectie invoeren op een telefoon is het niet — daarvoor is een eigen invoerapp of een koppeling met inspectiesoftware de logische volgende stap.</td></tr>
+    </tbody></table></div>
+
+    <h3>Rollen, inputmomenten en verantwoordelijkheden (08)</h3>
     <div class="tablewrap"><table><thead><tr><th>Fase</th><th class="wrap">Input / beslissing</th><th>Wie</th><th>Methodiek</th><th>Kleur</th><th>Output</th><th>Verantw.</th></tr></thead><tbody>${Rl.map(r=>`<tr><td>${esc(r.fase)}</td><td class="wrap">${esc(r.input)}</td><td>${esc(r.wie)}</td><td>${esc(r.methodiek)}</td><td>${esc(r.kleur)}</td><td>${esc(r.output)}</td><td>${esc(r.verantwoordelijkheid)}</td></tr>`).join('')}</tbody></table></div>
-    <h3>07 Woordenlijst</h3>
-    <div class="tablewrap"><table><thead><tr><th>Begrip</th><th class="wrap">Betekenis</th><th class="wrap">Toelichting binnen dit model</th><th>Rol</th></tr></thead><tbody>${W.map(w=>`<tr><td><b>${esc(w.begrip)}</b></td><td class="wrap">${esc(w.betekenis)}</td><td class="wrap">${esc(w.toelichting)}</td><td>${esc(w.rol)}</td></tr>`).join('')}</tbody></table></div>`;
+
+    <h3>Begrippenlijst (07)</h3>
+    <div class="tablewrap"><table><thead><tr><th>Begrip</th><th class="wrap">Betekenis</th><th class="wrap">Toelichting binnen dit model</th><th>Rol</th></tr></thead><tbody>${W.map(w=>`<tr><td><b>${esc(w.begrip)}</b></td><td class="wrap">${esc(w.betekenis)}</td><td class="wrap">${esc(w.toelichting)}</td><td>${esc(w.rol)}</td></tr>`).join('')}
+      <tr><td><b>Prijspeil</b></td><td class="wrap">jaar waarin de kengetallen zijn uitgedrukt</td><td class="wrap">kosten voer je hierop in; indexering naar het uitvoeringsjaar doet het model</td><td>AM</td></tr>
+      <tr><td><b>Contante waarde (NPV)</b></td><td class="wrap">toekomstige uitgaven teruggerekend naar nu</td><td class="wrap">met de discontovoet uit tab 01; maakt uitstellen financieel vergelijkbaar</td><td>AM</td></tr>
+      <tr><td><b>Restlevensduur</b></td><td class="wrap">resterende technische levensduur van een bouwdeel</td><td class="wrap">basis voor T: levensduur × restfactor van de degradatiecurve</td><td>Specialist</td></tr>
+      <tr><td><b>Referentieset</b></td><td class="wrap">door mensen vastgestelde waarden als maatstaf</td><td class="wrap">waaraan de AI-kwaliteit per model wordt gemeten</td><td>Specialist</td></tr>
+    </tbody></table></div>`;
+  $('#uitPrint').onclick = () => {
+    const w = window.open('', '_blank');
+    w.document.write(`<!DOCTYPE html><html lang="nl"><head><meta charset="utf-8"><title>STEMI – handleiding</title>
+      <style>@page{size:A4 portrait;margin:18mm 14mm}body{font:10pt/1.45 "Segoe UI",Arial,sans-serif;color:#1b1f23}
+      h2{font-size:18pt;color:#12776a}h3{font-size:12pt;color:#12776a;border-bottom:1px solid #12776a;padding-bottom:2px;margin-top:1.4em;page-break-after:avoid}
+      .card{border:1px solid #d5dbe0;border-radius:6px;padding:8px 10px;margin:.4em 0;page-break-inside:avoid}
+      table{border-collapse:collapse;width:100%;font-size:8.5pt;margin:.4em 0}th,td{border:1px solid #d5dbe0;padding:3px 5px;text-align:left;vertical-align:top}th{background:#f1f4f6}
+      .note{font-size:8pt;color:#5d6a75}.toolbar,button{display:none}.sub{color:#4a5560}.grid.two{display:block}</style></head>
+      <body>${$('#tab-uitleg').innerHTML}</body></html>`);
+    w.document.close(); setTimeout(() => w.print(), 300);
+  };
+  $$('[data-go]', $('#tab-uitleg')).forEach(b => b.onclick = () => window.STEMI_UI.switchTab(b.dataset.go));
 }
 
-// ---------- Excel-export ----------
 function exportXlsx() {
   const wb = XLSX.utils.book_new(), R = C.calc.rows, S = C.state.settings;
   const s01 = [['Parameter','Waarde'],['Instellingenprofiel',S.naam],['Waardekompas profiel',S.params.profiel],['Startjaar',S.params.startjaar],['Horizon',S.params.horizon],['O-referentieperiode',S.params.oRef],['NEN signaal vanaf conditie',S.params.nenSignaal],['Default omslag',S.params.omslagDefault],['Prijspeil',S.params.prijspeil??S.params.startjaar],['Inflatie per jaar',S.params.inflatie],['Btw-percentage',S.params.btwPercentage],['Begroting',S.params.btwWeergave==='incl'?'inclusief btw':'exclusief btw'],['Discontovoet',S.params.discontovoet],['Budgetplafond per jaar',S.params.budgetplafond??''],[],['Aspect','Profiel','Minimum','Definitief','Factor'],...ASP.map((a,i)=>[a,(S.profielen[S.params.profiel]||[])[i],S.params.minimum[i],C.calc.bel[i],C.calc.fac[i]]),[],['ID','Maatregel/besluit','Gepland jaar','Status','Toelichting'],...C.state.besluiten.map(b=>[b.id,b.maatregel,b.jaar,b.status,b.toelichting])];

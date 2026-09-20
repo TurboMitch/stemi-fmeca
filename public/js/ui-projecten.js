@@ -43,8 +43,11 @@ async function createProject(f) {
   let d;
   if (f.basis === 'kopie' && f.bron) d = await DB.duplicateDossier(f.bron, naam, { alleenInstellingen: true, ...project, portefeuille: port });
   else if (f.basis === 'volledig' && f.bron) d = await DB.duplicateDossier(f.bron, naam, { project, portefeuille: port });
-  else { const st = C.emptyState(); st.project = project; if (f.basis !== 'voorbeeld') { st.inspectie = []; st.specialist = []; st.besluiten = []; st.ai = {}; } d = await DB.createDossier(naam, st, { portefeuille: port }); }
+  else { const st = C.emptyState(); st.project = project; if (f.basis !== 'voorbeeld') { st.inspectie = []; st.specialist = []; st.besluiten = []; st.ai = {}; }
+    if (f.basis === 'sjabloon' && f.sjabloon) st.settings = C.clone(f.sjabloon.settings);   // instellingen uit het sjabloon
+    d = await DB.createDossier(naam, st, { portefeuille: port }); }
   C.setState(d.state); C.state.ai = d.state.ai || {}; leden = null;
+  if (f.basis === 'sjabloon' && f.sjabloon) { try { C.pasSjabloonToe(f.sjabloon); } catch (e) { C.toast('Sjabloon niet volledig toegepast: ' + e.message, 7000); } }
   C.audit({ veld: 'project', nieuw: `aangemaakt (${f.basis})`, bron: 'mens' });
   await refresh(); U().renderAll(); C.toast(`Project “${naam}” aangemaakt – jij bent eigenaar`, 5000);
   U().switchTab(f.basis === 'kopie' || f.basis === 'volledig' ? 'inspectie' : 'eigenaar');
@@ -119,7 +122,9 @@ function render() {
           <option value="kopie" ${cache.length ? 'selected' : ''}>Instellingenprofiel kopiëren van bestaand project (zonder data)</option>
           <option value="volledig">Volledige kopie van bestaand project (incl. data en AI-voorstellen)</option>
           <option value="voorbeeld">Met voorbeelddata uit het Excel-model (demo)</option>
+          <option value="sjabloon">Uit een klantsjabloonbestand (.json)</option>
         </select></div>
+      <div class="field" id="npSjabWrap" style="display:none"><label>Klantsjabloon</label><input type="file" id="npSjab" accept=".json"><p class="note">Zo'n bestand download je in Instellingen bij een project dat al goed staat ingericht.</p></div>
       <div class="field" id="npBronWrap"><label>Bronproject</label><select id="npBron">${cache.map(x => `<option value="${x.id}" ${x.id === cur?.id ? 'selected' : ''}>${esc(x.naam)} · profiel “${esc(x.meta?.profiel || '')}”</option>`).join('')}</select></div>
       <button class="btn" id="npGo">Project aanmaken</button>
       <p class="note">Je wordt automatisch eigenaar van een nieuw project en bepaalt daarna wie er nog bij mag.</p>
@@ -150,8 +155,20 @@ function render() {
   </div>
   ${prullenbakHtml()}`;
 
-  const basisSel = $('#npBasis'); const showBron = () => $('#npBronWrap').style.display = (basisSel.value === 'kopie' || basisSel.value === 'volledig') && cache.length ? '' : 'none'; basisSel.onchange = showBron; showBron();
-  $('#npGo').onclick = () => createProject({ naam: $('#npNaam').value, klant: $('#npKlant').value, object: $('#npObject').value, adres: $('#npAdres').value, portefeuille: $('#npPort').value, omschrijving: $('#npOms').value, basis: basisSel.value, bron: $('#npBron')?.value }).catch(e => C.toast('Aanmaken mislukt: ' + e.message, 6000));
+  const basisSel = $('#npBasis');
+  const showBron = () => { $('#npBronWrap').style.display = (basisSel.value === 'kopie' || basisSel.value === 'volledig') && cache.length ? '' : 'none';
+    $('#npSjabWrap').style.display = basisSel.value === 'sjabloon' ? '' : 'none'; };
+  basisSel.onchange = showBron; showBron();
+  $('#npGo').onclick = async () => {
+    const f = { naam: $('#npNaam').value, klant: $('#npKlant').value, object: $('#npObject').value, adres: $('#npAdres').value, portefeuille: $('#npPort').value, omschrijving: $('#npOms').value, basis: basisSel.value, bron: $('#npBron')?.value };
+    if (f.basis === 'sjabloon') {
+      const bestand = $('#npSjab').files[0];
+      if (!bestand) { C.toast('Kies eerst een sjabloonbestand'); return; }
+      try { f.sjabloon = JSON.parse(await bestand.text()); if (f.sjabloon.soort !== 'stemi-klantsjabloon') throw new Error('dit is geen STEMI-klantsjabloon'); }
+      catch (e) { C.toast('Ongeldig sjabloon: ' + e.message, 7000); return; }
+    }
+    createProject(f).catch(e => C.toast('Aanmaken mislukt: ' + e.message, 6000));
+  };
   $('#cpSave').onclick = async () => {
     try {
       const n = $('#cpNaam').value.trim(); if (n && n !== cur.naam) await DB.renameDossier(n);

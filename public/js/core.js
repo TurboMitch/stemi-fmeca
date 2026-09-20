@@ -618,12 +618,36 @@ function startFoutafhandeling() {
   window.addEventListener('unhandledrejection', e => { const r = e.reason; log('browser', (r?.message || String(r)).slice(0, 500), { soort: 'unhandledrejection', stack: r?.stack?.slice(0, 1500) }); });
 }
 function applySharedCfg(v) { if (!v) return; const { apiKey, ...rest } = v; cfg = Object.assign(cfg, rest); if (apiKey) cfg.apiKey = apiKey; /* lege gedeelde sleutel mag een lokaal ingevulde sleutel niet wissen */ }
+// ---------- klantsjabloon: alles wat je voor een nieuwe klant wilt hergebruiken in één bestand ----------
+/** instellingenprofiel + import- en koppelprofielen + T-regels + huisstijl + AI-context, zonder projectdata */
+function sjabloonVan(naam) {
+  return { soort: 'stemi-klantsjabloon', versie: 1, gemaakt: new Date().toISOString(),
+    naam: naam || state.settings.naam || 'STEMI-sjabloon',
+    settings: clone(state.settings),
+    huisstijl: clone(cfg.huisstijl || {}),
+    aiContext: cfg.context || '', modellen: clone(cfg.models || {}),
+    inhoud: { importprofielen: Object.keys(state.settings.importProfielen || {}).length,
+      koppelprofielen: Object.keys(state.settings.koppelProfielen || {}).length,
+      bibliotheekoverrides: Object.keys(state.settings.libOverrides || {}).length,
+      bouwdelenMetLevensduur: Object.keys(state.settings.rules?.tRegels?.levensduur || {}).length } };
+}
+/** sjabloon toepassen op het huidige project; projectdata blijft ongemoeid */
+function pasSjabloonToe(obj, opts = {}) {
+  if (!obj || obj.soort !== 'stemi-klantsjabloon' || !obj.settings) throw new Error('dit is geen STEMI-klantsjabloon');
+  state.settings = clone(obj.settings); migrateSettings(state.settings); syncAspects();
+  if (opts.huisstijl !== false && obj.huisstijl && Object.keys(obj.huisstijl).length) cfg.huisstijl = clone(obj.huisstijl);
+  if (opts.ai !== false) { if (obj.aiContext) cfg.context = obj.aiContext; if (obj.modellen && Object.keys(obj.modellen).length) cfg.models = clone(obj.modellen); }
+  audit({ veld: 'klantsjabloon', nieuw: obj.naam, bron: 'mens', opmerking: `sjabloon van ${obj.gemaakt?.slice(0, 10) || '?'} toegepast` });
+  save(); if (opts.huisstijl !== false || opts.ai !== false) saveCfg();
+  return sjabloonVan(obj.naam);
+}
+
 function resetState() { state = emptyState(); if (window.STEMI_DB) window.STEMI_DB.wisAi(null); save(); }
 
 return { ASP, ASP_SHORT, ONTWIKKELING, INTENSITEIT, ERNST, INSPECTEERBAAR, PRIOS, MODELS, SP_NUM, SP_FIELDS, syncAspects, addAspect, removeAspect, oKlasse, dKlasse,
   $, $$, esc, num, eur, pct, pct1, pill, uid, toast, clone, defaultRules, defaultSettings,
   get seed(){return seed}, get lib(){return lib}, get libByCode(){return libByCode}, get state(){return state}, set state(v){state=v}, get cfg(){return cfg}, get calc(){return calc},
-  save, saveCfg, audit, kpiVan, setAi, getSp, setSp, belangen, libEntry, systeemvoorstelO, voorstelD, voorstelDtekst, voorstelT, tJaarVanKlasse, OKANS, DTEKST,
+  save, saveCfg, audit, kpiVan, setAi, sjabloonVan, pasSjabloonToe, getSp, setSp, belangen, libEntry, systeemvoorstelO, voorstelD, voorstelDtekst, voorstelT, tJaarVanKlasse, OKANS, DTEKST,
   maatregelenVan, expandCyclus, recompute, prioVan, vergelijkVoorstel, vatEvaluatieSamen, WEERGAVEN, FIN_DEFAULT, inflatieVan, indexFactor, btwFactor, npvFactor, bedrag, weergaveDefault, budgetPlan, pasBudgetToe,
   bepaalT, tKlasseVanJaar, curveFactor, restjarenVan, herstelEffect, conditiePrognose, evalueerScenario, pasScenarioToe, SCENARIO_STRATEGIE, startFoutafhandeling, callAgent, modelFor, parseJSON, loadData, resetState, emptyState, setState, applySharedCfg, migrateV1 };
 })();

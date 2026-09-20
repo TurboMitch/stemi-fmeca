@@ -72,8 +72,9 @@ function budgetHtml() {
     ${voorstel}</div>`;
 }
 
+const KAP = 250; let alleRijen = false;
 function render() {
-  const el = $('#tab-mjop'); const R = C.calc.rows, jaren = C.calc.jaren, n = C.cfg.mjopJaren || 15, show = jaren.slice(0, n);
+  const el = $('#tab-mjop'); const Ralles = C.calc.rows, R = alleRijen ? Ralles : Ralles.slice(0, KAP), jaren = C.calc.jaren, n = C.cfg.mjopJaren || 15, show = jaren.slice(0, n);
   const w = weergave(), serie = C.calc.serieVan(w), P = C.state.settings.params;
   const cap = num(P.budgetplafond); const cum = []; serie.forEach((v,i)=>cum.push((cum[i-1]||0)+v));
   el.innerHTML = `
@@ -98,8 +99,10 @@ function render() {
     <tr><td colspan="8"><b>Totaal per jaar (${esc(wLabel(w))})</b></td><td class="num"><b>${eur(C.calc.totaalVan(w))}</b></td><td colspan="4"></td>${show.map((j,i)=>`<td class="num ${cap&&serie[i]>cap?'warn':''}"><b>${serie[i]?eur(serie[i]):''}</b></td>`).join('')}</tr>
     <tr><td colspan="8" class="note">Cumulatief</td><td colspan="5"></td>${show.map((j,i)=>`<td class="num note">${eur(cum[i])}</td>`).join('')}</tr>
     </tbody></table></div>
+    ${Ralles.length > KAP ? `<p class="note">${R.length} van ${Ralles.length} elementen getoond (de totalen en het diagram gaan over alle ${Ralles.length}). <button class="btn ghost small" id="mjopAlles">${alleRijen ? `alleen de eerste ${KAP} tonen` : 'alles tonen (kan traag zijn)'}</button></p>` : ''}
     <p class="note" style="margin-top:8px">Voorbeeld cyclus: “Conserverend schilderonderhoud” jaar 2031, cyclus 8 → 2031, 2039, 2047, 2055, 2063. Elementvervanging: handeling “Vervangen gevel” in het jaar aanleg + vervangingscyclus, kosten = kosten volledig element.</p>`;
   $('#mjopN').onchange = e => { C.cfg.mjopJaren = +e.target.value; C.saveCfg(); render(); };
+  const ma = $('#mjopAlles'); if (ma) ma.onclick = () => { alleRijen = !alleRijen; render(); };
   $('#mjopW').onchange = e => { C.cfg.mjopWeergave = e.target.value; C.saveCfg(); render(); };
   $$('[data-go]').forEach(b => b.onclick = e => { e.preventDefault(); window.STEMI_UI.switchTab(b.dataset.go); });
   $$('[data-m]').forEach(i => i.onchange = () => { const r = R.find(x=>x.id===+i.dataset.r); ensureOwn(r); let m = C.state.maatregelen.find(x=>x.id===i.dataset.m) || C.state.maatregelen.find(x=>x.regelId===r.id); const k=i.dataset.k; const old=m[k]; m[k] = k==='handeling' ? i.value : num(i.value); m.bron='mens'; C.audit({regel:r.id, veld:'mjop.'+k, oud:old, nieuw:m[k], bron:'mens'}); C.save(); window.STEMI_UI.renderAll('mjop'); });

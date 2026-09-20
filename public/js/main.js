@@ -1,11 +1,21 @@
 /* bootstrap: login → dossier → render */
 (() => {
 const C = window.STEMI, U = window.STEMI_UI, DB = window.STEMI_DB; const { $, $$, esc } = C;
-function switchTab(t) { $$('#tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===t)); $$('.tab').forEach(s=>s.classList.toggle('active',s.id==='tab-'+t)); window.scrollTo(0,0); if (t === 'scenario') try { U.renderScenario(); } catch(e) { console.error(e); }
-  if (t === 'kwaliteit') try { U.renderKwaliteit(); } catch(e) { console.error(e); }
-  if (t === 'rapport') try { U.renderRapport(); } catch(e) { console.error(e); } }
-const R = { projecten: () => U.renderProjecten(), overzicht: () => U.renderOverzicht(), eigenaar: () => U.renderEigenaar(), inspectie: () => U.renderInspectie(), specialist: () => U.renderSpecialist(), systeem: () => U.renderSysteem(), mjop: () => U.renderMjop(), scenario: () => { if (document.querySelector('#tab-scenario').classList.contains('active')) U.renderScenario(); }, rapport: () => { if (document.querySelector('#tab-rapport').classList.contains('active')) U.renderRapport(); }, kwaliteit: () => { if (document.querySelector('#tab-kwaliteit').classList.contains('active')) U.renderKwaliteit(); }, /* rapport is zwaar: alleen opbouwen als de tab open staat */ instellingen: () => U.renderInstellingen(), uitleg: () => U.renderUitleg() };
-function renderAll() { C.recompute(); for (const k in R) { try { R[k](); } catch(e) { console.error('render', k, e); $('#tab-'+k).innerHTML = `<p class="warn">Fout bij weergeven: ${esc(e.message)}</p>`; } } renderHeader(); }
+const R = { projecten: () => U.renderProjecten(), overzicht: () => U.renderOverzicht(), eigenaar: () => U.renderEigenaar(), inspectie: () => U.renderInspectie(),
+  specialist: () => U.renderSpecialist(), systeem: () => U.renderSysteem(), mjop: () => U.renderMjop(), scenario: () => U.renderScenario(),
+  rapport: () => U.renderRapport(), kwaliteit: () => U.renderKwaliteit(), instellingen: () => U.renderInstellingen(), uitleg: () => U.renderUitleg() };
+const actief = () => [...document.querySelectorAll('.tab')].find(s => s.classList.contains('active'))?.id.replace('tab-', '') || 'overzicht';
+/** één tabblad opbouwen; fouten blijven in dat tabblad en slopen de rest niet */
+function renderTab(k) { if (!R[k]) return; try { R[k](); } catch (e) { console.error('render', k, e); const el = $('#tab-' + k); if (el) el.innerHTML = `<p class="warn">Fout bij weergeven: ${esc(e.message)}</p>`; } }
+function switchTab(t) {
+  $$('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
+  $$('.tab').forEach(s => s.classList.toggle('active', s.id === 'tab-' + t));
+  window.scrollTo(0, 0); renderTab(t);
+}
+/* Alleen het zichtbare tabblad opbouwen. Bij 1.000 inspectieregels kost tab 03 ruim 0,7 seconde;
+   alles hertekenen bij elke wijziging maakte de app daar onbruikbaar. De andere tabbladen worden
+   opgebouwd zodra je ze opent, dus ze zijn altijd actueel. */
+function renderAll(hint) { C.recompute(); renderTab(actief()); if (hint && hint !== actief()) { /* bewust niet: dat tabblad wordt bij het openen bijgewerkt */ } renderHeader(); }
 Object.assign(U, { switchTab, renderAll });
 
 function renderHeader() {
