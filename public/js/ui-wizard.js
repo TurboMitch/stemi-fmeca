@@ -1,8 +1,8 @@
-/* Assetmanager-wizard: 09 profielbibliotheek → 06 scorekaarten & beslisregels → 01 AM-parameters → samenvatting */
+/* Assetmanager-wizard: 09 profielbibliotheek → 06 scorekaarten & beslisregels → T-bepaling & conditie → 01 AM-parameters → samenvatting */
 (() => {
 const C = window.STEMI; const { $, $$, esc, num, ASP, pill } = C;
-let step = 0;
-const STEPS = ['1 · Profielbibliotheek (09)','2 · Scorekaarten & beslisregels (06)','3 · Eigenaar / AM-parameters (01)','4 · Samenvatting'];
+let step = 0, tQ = '';
+const STEPS = ['1 · Profielbibliotheek (09)','2 · Scorekaarten & beslisregels (06)','3 · T-bepaling & conditie','4 · Eigenaar / AM-parameters (01)','5 · Samenvatting'];
 
 function render() {
   const el = $('#tab-eigenaar'); const S = C.state.settings;
@@ -11,12 +11,12 @@ function render() {
     <p class="sub">Beleidsmatige kaders in de volgorde profielbibliotheek → scorekaarten → objectparameters. Samen vormen ze het <b>instellingenprofiel</b> “${esc(S.naam)}”. <span class="tag">PAARS/BLAUW</span></p>
     <div class="steps">${STEPS.map((s,i)=>`<button class="step ${i===step?'active':''} ${i<step?'done':''}" data-step="${i}">${s}</button>`).join('')}</div>
     <div id="wizBody"></div>
-    <div class="toolbar" style="margin-top:14px"><button class="btn ghost" id="wizPrev" ${step===0?'disabled':''}>← Vorige</button><span class="spacer"></span>${step<3?'<button class="btn" id="wizNext">Volgende →</button>':'<button class="btn" id="wizDone">Profiel vastleggen</button>'}</div>
+    <div class="toolbar" style="margin-top:14px"><button class="btn ghost" id="wizPrev" ${step===0?'disabled':''}>← Vorige</button><span class="spacer"></span>${step<4?'<button class="btn" id="wizNext">Volgende →</button>':'<button class="btn" id="wizDone">Profiel vastleggen</button>'}</div>
     <h3>MJOP-besluiten per FMECA-regel</h3><p class="note">Vul pas in nadat het systeemmodel prioriteit en technische deadline heeft bepaald. Meerdere handelingen per element regel je in 05 MJOP.</p>
     <div class="tablewrap"><table><thead><tr><th>ID</th><th>Element</th><th>Systeemprio</th><th>Uiterlijk</th><th>Techn. deadline</th><th class="wrap">Voorgestelde maatregel (specialist)</th><th class="wrap">Maatregel / besluit (AM)</th><th>Gepland jaar</th><th>Kosten</th><th>Status</th><th class="wrap">Toelichting / acceptatie</th></tr></thead><tbody>
     ${C.calc.rows.map(r=>`<tr><td>${r.id}</td><td>${esc(r.insp.element)}</td><td>${pill(r.prio)}</td><td>${r.laatsteJaar??'—'}</td><td>${r.deadline??'—'}</td><td class="wrap">${esc(r.sp.maatregel||'')}</td><td class="blauw"><textarea data-bes="${r.id}" data-k="maatregel">${esc(r.bes.maatregel||'')}</textarea></td><td class="blauw"><input class="n" data-bes="${r.id}" data-k="jaar" value="${esc(r.bes.jaar??'')}" placeholder="${r.laatsteJaar??''}"></td><td class="num">${C.eur(r.definitieveKosten)}</td><td class="blauw"><select data-bes="${r.id}" data-k="status">${['','Voorgesteld','Goedgekeurd','Uitgesteld','Risico geaccepteerd','Afgewezen'].map(s=>`<option ${s===(r.bes.status||'')?'selected':''}>${s}</option>`).join('')}</select></td><td class="blauw"><textarea data-bes="${r.id}" data-k="toelichting">${esc(r.bes.toelichting||'')}</textarea></td></tr>`).join('')}
     </tbody></table></div>`;
-  [renderProfielen, renderScorekaarten, renderParams, renderSamenvatting][step]($('#wizBody'));
+  [renderProfielen, renderScorekaarten, renderTregels, renderParams, renderSamenvatting][step]($('#wizBody'));
   $$('.step').forEach(b => b.onclick = () => { step = +b.dataset.step; render(); });
   const prev=$('#wizPrev'); if(prev) prev.onclick = () => { step--; render(); };
   const next=$('#wizNext'); if(next) next.onclick = () => { step++; render(); };
@@ -114,6 +114,70 @@ function renderScorekaarten(el) {
   $$('[data-tk]').forEach(i => i.onchange = () => { R.tKlassen[+i.dataset.tk].jaar = num(i.value); rerender(); });
   $('#rulesReset').onclick = () => { if(confirm('Scorecriteria, bepalingsregels en beslisregels terugzetten naar de standaard?')) { const keep = { safetyAspect: S.rules.safetyAspect, complianceAspect: S.rules.complianceAspect }; S.rules = Object.assign(C.defaultRules(), keep); const sk = C.clone(C.seed.scorekaarten); sk.S.forEach(s => { while (s.aspecten.length < ASP.length) s.aspecten.push(''); }); S.scorekaarten = sk; rerender(); render(); } };
 }
+/** Stap 3: T-bepaling uit restlevensduur per bouwdeelcategorie, plus de aannames voor de conditieprognose */
+function renderTregels(el) {
+  const S = C.state.settings, R = S.rules, T = R.tRegels, rows = C.calc.rows;
+  // welke bouwdeelcategorieen komen in dit project voor, en staan die in de levensduurtabel?
+  const gebruikt = {}; rows.forEach(r => { const b = r.libE?.bouwdeel || r.insp.bouwdeel || ''; if (b) gebruikt[b] = (gebruikt[b]||0)+1; });
+  const namen = Object.keys(gebruikt).sort((a,b)=>gebruikt[b]-gebruikt[a]);
+  const zonder = namen.filter(n => C.num(T.levensduur[n]) == null);
+  const bronnen = rows.reduce((a,r)=>{ a[r.tInfo?.bron||'onbekend'] = (a[r.tInfo?.bron||'onbekend']||0)+1; return a; }, {});
+  const q = (tQ||'').trim().toLowerCase();
+  const alle = Object.keys(T.levensduur).sort();
+  const lijst = q ? alle.filter(n => n.toLowerCase().includes(q)) : namen;
+  const curveOpt = v => ['lineair','progressief','degressief'].map(c=>`<option ${c===v?'selected':''}>${c}</option>`).join('');
+  el.innerHTML = `<div class="card"><h3 style="margin-top:0">Faalmoment T uit restlevensduur</h3>
+    <p class="note">T is de verwachte tijd tot functieverlies. Tot nu kwam T alleen uit vaste regels per gebrekcode (${Object.keys(R.tPerCode).length} codes), waardoor de specialist of de AI het voor alle andere regels zelf moest bepalen. Nu rekent het model:
+    <b>T = levensduur bouwdeel × restfactor(degradatiegraad) ÷ ontwikkelsnelheid × ernstfactor × omvangfactor</b>, begrensd op de resterende technische levensduur en op de horizon. Een vaste regel per gebrekcode gaat altijd voor.</p>
+    <label class="note"><input type="checkbox" data-tr="actief" ${T.actief?'checked':''}> T-model gebruiken (uit = alleen vaste regels per gebrekcode)</label>
+    <div class="grid two" style="margin-top:10px">
+      <div><b>Degradatiegraad per NEN-intensiteit</b><table class="mini"><tbody>${C.INTENSITEIT.map(k=>`<tr><td>${k}</td><td><input class="n" data-trif="${k}" value="${T.intensiteitFractie[k]??''}"></td></tr>`).join('')}</tbody></table>
+        <label class="note"><input type="checkbox" data-tr="gebruikConditie" ${T.gebruikConditie?'checked':''}> conditiescore als kruiscontrole (de verst gevorderde van intensiteit en conditie telt)</label>
+        <table class="mini" style="margin-top:6px"><thead><tr><th>Conditie</th>${[1,2,3,4,5,6].map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody><tr><td class="note">degradatiegraad</td>${[1,2,3,4,5,6].map(c=>`<td><input class="n" style="width:56px" data-trcf="${c}" value="${T.conditieFractie[c]??''}"></td>`).join('')}</tr></tbody></table></div>
+      <div><b>Ontwikkelsnelheid (deler)</b><table class="mini"><tbody>${C.ONTWIKKELING.map(k=>`<tr><td>${k}</td><td><input class="n" data-trov="${k}" value="${T.ontwikkelingSnelheid[k]??''}"></td></tr>`).join('')}</tbody></table>
+        <b>Ernstfactor</b><table class="mini"><tbody>${C.ERNST.map(k=>`<tr><td>${k}</td><td><input class="n" data-tref="${k}" value="${T.ernstFactor[k]??''}"></td></tr>`).join('')}</tbody></table>
+        <b>Omvangfactor</b><table class="mini"><tbody>${T.omvangFactor.map((x,i)=>`<tr><td class="note">omvang ≥</td><td><input class="n" style="width:56px" data-trof="${i}" data-k="min" value="${x.min}"></td><td class="note">factor</td><td><input class="n" style="width:56px" data-trof="${i}" data-k="factor" value="${x.factor}"></td></tr>`).join('')}</tbody></table></div>
+    </div>
+    <div class="grid two" style="margin-top:6px">
+      <div class="field"><label>Standaard levensduur als het bouwdeel onbekend is (jaar)</label><input data-tr="levensduurDefault" value="${T.levensduurDefault??''}"></div>
+      <div class="field"><label>Standaard degradatiecurve</label><select data-tr="curveDefault">${curveOpt(T.curveDefault)}</select></div>
+    </div>
+    <p class="note">Curve: <b>lineair</b> restfactor 1−d · <b>progressief</b> (1−d)² – schade versnelt, typisch voor afwerkingen en beschermlagen · <b>degressief</b> √(1−d) – schade vertraagt, typisch voor constructies.</p>
+    <p class="note">In dit project: ${Object.entries(bronnen).map(([b,n])=>`${n}× ${({code:'vaste regel per gebrekcode',model:'restlevensduurmodel',onbekend:'geen T (specialist bepaalt)'})[b]||b}`).join(' · ')}.</p>
+    ${zonder.length?`<p class="warn">${zonder.length} bouwdeelnaam${zonder.length>1?'en':''} uit dit project staat nog niet in de levensduurtabel: ${zonder.map(n=>`<b>${esc(n)}</b> (${gebruikt[n]}×)`).join(', ')}. Die regels rekenen met de standaard van ${T.levensduurDefault} jaar; vul hieronder een eigen levensduur in.</p>`:'<p class="note">Alle bouwdeelnamen uit dit project staan in de levensduurtabel.</p>'}
+  </div>
+  <div class="card"><h3 style="margin-top:0">Levensduur en curve per bouwdeel</h3>
+    <div class="toolbar"><input id="tQ" placeholder="Zoek of voeg een bouwdeelnaam toe…" value="${esc(tQ)}" style="min-width:320px"><span class="note">${q?`${lijst.length} van ${alle.length}`:`${namen.length} namen uit dit project; zoek om de volledige lijst van ${alle.length} te zien`}</span>${q && !alle.includes(tQ.trim())?`<button class="btn ghost small" id="tAdd">“${esc(tQ.trim())}” toevoegen</button>`:''}</div>
+    <div class="tablewrap"><table><thead><tr><th>Bouwdeel</th><th>In dit project</th><th>Levensduur (jr)</th><th>Curve</th><th class="wrap">T bij intensiteit Gevorderd, ontwikkeling onbekend</th></tr></thead><tbody>
+    ${lijst.slice(0,80).map(n=>{ const L=C.num(T.levensduur[n]), v=T.curve[n]||T.curveDefault;
+      const voorb = C.bepaalT({bouwdeel:n, intensiteit:'Gevorderd'}, {bouwdeel:n});
+      return `<tr class="${zonder.includes(n)?'ovr':''}"><td>${esc(n)}</td><td class="num note">${gebruikt[n]||''}</td><td><input class="n" data-trl="${esc(n)}" value="${L??''}" placeholder="${T.levensduurDefault}"></td><td><select data-trc="${esc(n)}"><option value="">standaard (${T.curveDefault})</option>${['lineair','progressief','degressief'].map(c=>`<option ${c===T.curve[n]?'selected':''}>${c}</option>`).join('')}</select></td><td class="note">${voorb.jaar==null?'—':`${voorb.jaar} jr → ${esc(voorb.klasse)}`}</td></tr>`;}).join('')}
+    </tbody></table></div>
+  </div>
+  <div class="card"><h3 style="margin-top:0">Conditieprognose: effect van een handeling</h3>
+    <p class="note">Voor de conditieprognose (tab 04) telt wat een handeling met de NEN-conditie doet. Vervangen zet de conditie terug naar 1, herstellen naar 2, reinigen of conserveren verbetert een stap. Daarna begint de degradatie opnieuw vanuit die conditie, over de levensduur van het bouwdeel.</p>
+    <table class="mini"><tbody>
+      <tr><td>Vervangen / renoveren → conditie</td><td><input class="n" data-trh="vervangen" value="${T.herstelNiveau?.vervangen??1}"></td></tr>
+      <tr><td>Herstellen / repareren → conditie</td><td><input class="n" data-trh="herstellen" value="${T.herstelNiveau?.herstellen??2}"></td></tr>
+      <tr><td>Reinigen / conserveren → stappen beter (negatief getal)</td><td><input class="n" data-trh="reinigen" value="${T.herstelNiveau?.reinigen??-1}"></td></tr>
+    </tbody></table>
+    <button class="btn ghost" data-go="systeem">Naar de conditieprognose</button>
+  </div>`;
+  const herteken = () => { C.save(); C.recompute(); renderTregels(el); };
+  $$('[data-tr]').forEach(i => i.onchange = () => { const k=i.dataset.tr; T[k] = i.type==='checkbox' ? i.checked : (num(i.value) ?? i.value); C.audit({veld:'tRegels.'+k, nieuw:T[k], bron:'mens'}); herteken(); });
+  $$('[data-trif]').forEach(i => i.onchange = () => { T.intensiteitFractie[i.dataset.trif] = num(i.value) ?? 0; herteken(); });
+  $$('[data-trov]').forEach(i => i.onchange = () => { T.ontwikkelingSnelheid[i.dataset.trov] = num(i.value) ?? 1; herteken(); });
+  $$('[data-tref]').forEach(i => i.onchange = () => { T.ernstFactor[i.dataset.tref] = num(i.value) ?? 1; herteken(); });
+  $$('[data-trcf]').forEach(i => i.onchange = () => { T.conditieFractie[i.dataset.trcf] = num(i.value) ?? 0; herteken(); });
+  $$('[data-trof]').forEach(i => i.onchange = () => { T.omvangFactor[+i.dataset.trof][i.dataset.k] = num(i.value) ?? 1; herteken(); });
+  $$('[data-trl]').forEach(i => i.onchange = () => { const n=i.dataset.trl, v=num(i.value); if (v==null) delete T.levensduur[n]; else T.levensduur[n]=v; C.audit({veld:'tRegels.levensduur.'+n, nieuw:v, bron:'mens'}); herteken(); });
+  $$('[data-trc]').forEach(i => i.onchange = () => { const n=i.dataset.trc; if (!i.value) delete T.curve[n]; else T.curve[n]=i.value; herteken(); });
+  $$('[data-trh]').forEach(i => i.onchange = () => { T.herstelNiveau = T.herstelNiveau||{}; T.herstelNiveau[i.dataset.trh] = num(i.value) ?? 1; herteken(); });
+  $('#tQ').oninput = e => { tQ = e.target.value; clearTimeout(window._tq); window._tq = setTimeout(() => renderTregels(el), 250); };
+  const ad = $('#tAdd'); if (ad) ad.onclick = () => { T.levensduur[tQ.trim()] = T.levensduurDefault; C.audit({veld:'tRegels.levensduur.'+tQ.trim(), nieuw:T.levensduurDefault, bron:'mens', opmerking:'bouwdeel toegevoegd'}); herteken(); };
+  $$('[data-go]').forEach(b => b.onclick = () => window.STEMI_UI.switchTab(b.dataset.go));
+}
+
 function pctOf(list, dflt) { const m = Math.min(...list.map(x=>x.min)); return isFinite(m) ? Math.round(m*100)+'%' : dflt; }
 
 function renderParams(el) {

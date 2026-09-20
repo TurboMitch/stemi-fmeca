@@ -11,6 +11,17 @@ function barChart(labels, values, opts = {}) {
   const cap = opts.cap ? `<line x1="${pl}" x2="${W}" y1="${y(opts.cap)}" y2="${y(opts.cap)}" stroke="#c0392b" stroke-width="1.5" stroke-dasharray="5 3"><title>Plafond ${eur(opts.cap)}</title></line><text x="${W-4}" y="${y(opts.cap)-4}" font-size="10" text-anchor="end" fill="#c0392b">plafond ${eur(opts.cap)}</text>` : '';
   return `<svg class="chart" viewBox="0 0 ${W} ${H}">${ticks}${bars}${cap}</svg>`;
 }
+/** lijndiagram voor de conditieprognose: één of meer reeksen op een vaste y-as (NEN-conditie 1–6) */
+function lineChart(labels, reeksen, opts = {}) {
+  const W=900,H=220,pl=40,pb=28,min=opts.min??1,max=opts.max??6;
+  const x=i=>pl+(W-pl-10)*(labels.length<2?0.5:i/(labels.length-1)), y=v=>H-pb-(H-pb-10)*(v-min)/(max-min);
+  const kleuren = opts.kleuren || ['var(--accent)','#c0392b','#8e8e93'];
+  const lijnen = reeksen.map((r,k)=>`<polyline fill="none" stroke="${kleuren[k%kleuren.length]}" stroke-width="2" ${r.stippel?'stroke-dasharray="5 3"':''} points="${r.waarden.map((v,i)=>`${x(i)},${y(v)}`).join(' ')}"><title>${esc(r.naam)}</title></polyline>`).join('');
+  const ticks=[];for(let v=min;v<=max;v++)ticks.push(`<text x="${pl-6}" y="${y(v)+4}" font-size="10" text-anchor="end">${v}</text><line x1="${pl}" x2="${W}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/>`);
+  const jaar = labels.map((l,i)=> (labels.length<=20||i%5===0) ? `<text x="${x(i)}" y="${H-8}" font-size="10" text-anchor="middle">${l}</text>` : '').join('');
+  const leg = reeksen.map((r,k)=>`<span class="note" style="margin-right:12px"><span style="display:inline-block;width:14px;height:3px;background:${kleuren[k%kleuren.length]};vertical-align:middle;margin-right:4px"></span>${esc(r.naam)}</span>`).join('');
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}">${ticks.join('')}${lijnen}${jaar}</svg><div>${leg}</div>`;
+}
 function ensureOwn(r) {
   // eerste handmatige bewerking: maak van de automatische maatregel een eigen record
   if (C.state.maatregelen.some(m => m.regelId === r.id)) return;
@@ -105,5 +116,5 @@ function render() {
     const n2 = C.pasBudgetToe(plan); plan = null; window.STEMI_UI.renderAll('mjop'); C.toast(`${n2} handeling(en) verschoven en vastgelegd in de audittrail`); };
   const dr = $('#bgDrop'); if (dr) dr.onclick = () => { plan = null; render(); };
 }
-window.STEMI_UI = window.STEMI_UI || {}; window.STEMI_UI.renderMjop = render; window.STEMI_UI.barChart = barChart;
+window.STEMI_UI = window.STEMI_UI || {}; window.STEMI_UI.renderMjop = render; window.STEMI_UI.barChart = barChart; window.STEMI_UI.lineChart = lineChart;
 })();

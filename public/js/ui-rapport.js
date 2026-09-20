@@ -5,7 +5,7 @@ const D = () => new Date().toLocaleDateString('nl-NL', { day:'numeric', month:'l
 
 /** huisstijl staat in de gedeelde instellingen, zodat elk project hetzelfde rapport oplevert */
 function hs() { C.cfg.huisstijl = Object.assign({ bedrijf:'STEMI', kleur:'#12776a', logo:'', voettekst:'' }, C.cfg.huisstijl || {}); return C.cfg.huisstijl; }
-const opts = () => { C.cfg.rapport = Object.assign({ jaren:15, onderbouwing:true, audit:true, bijlagen:true, topN:10 }, C.cfg.rapport || {}); return C.cfg.rapport; };
+const opts = () => { C.cfg.rapport = Object.assign({ jaren:15, onderbouwing:true, audit:true, bijlagen:true, topN:10, conditie:true, scenarios:true }, C.cfg.rapport || {}); return C.cfg.rapport; };
 
 // ---------- bouwstenen ----------
 const tbl = (head, rows, cls='') => `<table class="${cls}"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map((c,i)=>`<td class="${typeof c === 'number' ? 'num' : ''}">${c==null?'':(typeof c==='number'?eur(c):c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
@@ -115,7 +115,47 @@ function rapportHtml(o = {}) {
       jaren.flatMap(j => R.flatMap(r => r.maatregelen.filter(m => m.jaren.includes(j)).map(m =>
         [String(j), String(r.id), esc(r.insp.element), esc((m.handeling||'').slice(0,110)), r.prio||'—', m.kosten||0, (m.kosten||0)*(C.calc.idx[j]||1), m.cyclus?`elke ${m.cyclus} jr`:'eenmalig']))))}`;
 
-  const onderbouwing = !o.onderbouwing ? '' : `<h2>5 Onderbouwing per maatregel</h2>
+  let pg = null; try { pg = o.conditie ? C.conditiePrognose() : null; } catch {}
+  const conditie = !pg || !pg.rijen.length ? '' : (() => {
+    const jn = pg.jaren.slice(0, n), r1 = a => a.slice(0, n).map(v => Math.round(v * 10) / 10);
+    const bron = R.reduce((a, r) => { const b = r.tInfo?.bron || 'onbekend'; a[b] = (a[b] || 0) + 1; return a; }, {});
+    return `<h2>5 Conditieprognose</h2>
+    <p>De NEN 2767-conditie loopt naar 6 (zeer slecht) op het faalmoment T. Een handeling zet de conditie terug — vervangen naar 1, herstellen naar 2, reinigen of conserveren een stap — waarna de degradatie opnieuw begint over de levensduur van het bouwdeel. Onderstaande prognose zet het geplande onderhoud tegenover niets doen${pg.gewogen ? ', gewogen naar hoeveelheid' : ''}.</p>
+    <p class="note">T is bepaald voor ${(bron.model || 0) + (bron.code || 0)} van de ${R.length} regels: ${Object.entries(bron).map(([b, c]) => `${c}× ${({ code: 'een vaste regel per gebrekcode', model: 'het restlevensduurmodel per bouwdeelcategorie', onbekend: 'nog niet (de specialist bepaalt)' })[b] || b}`).join(', ')}.</p>
+    ${o.word ? '' : window.STEMI_UI.lineChart(jn, [{ naam: 'Met het geplande onderhoud', waarden: r1(pg.gemMet) }, { naam: 'Zonder ingrijpen', waarden: r1(pg.gemZonder), stippel: true }], { min: 1, max: 6 })}
+    ${tbl(['Jaar', 'Gemiddelde conditie met plan', 'Gemiddelde conditie zonder ingrijpen', 'Regels conditie ≥ 5 (met plan)', 'Regels conditie ≥ 5 (zonder)'],
+      jn.map((j, i) => [String(j), String(Math.round(pg.gemMet[i] * 10) / 10), String(Math.round(pg.gemZonder[i] * 10) / 10), String(pg.slechtMet[i]), String(pg.slechtZonder[i])]))}
+    <h3>5.1 Restlevensduur per regel</h3>
+    ${tbl(['ID', 'Element', 'Prio', 'Conditie nu', 'T (jr)', 'Levensduur bouwdeel', 'Curve', `Conditie in ${jn[jn.length - 1]}`],
+      pg.rijen.map(x => [String(x.id), esc(x.element), x.prio || '—', String(x.nu), x.T == null ? '—' : String(Math.round(x.T * 10) / 10), String(x.L), esc(x.vorm), String(Math.round(x.met[n - 1] * 10) / 10)]))}`;
+  })();
+
+  let scen = '';
+  if (o.scenarios && window.STEMI_UI.evalueerAlle) {
+    try {
+      const res = window.STEMI_UI.evalueerAlle();
+      if (res.length > 1) scen = `<h2>6 Scenariovergelijking</h2>
+        <p>Dezelfde onderhoudsbehoefte, verschillende beleidskeuzes. Per scenario staat wat het kost, wat het met het risico doet en hoe de technische staat zich ontwikkelt.</p>
+        ${tbl(['Kerncijfer', ...res.map(r => esc(r.def.naam))], [
+          ['Aanpak', ...res.map(r => esc((C.SCENARIO_STRATEGIE.find(x => x[0] === r.def.strategie) || [])[1] || r.def.strategie) + (r.def.prios?.length ? ` · alleen ${r.def.prios.join(', ')}` : '') + (r.def.plafond ? ` · plafond ${eur(r.def.plafond)}` : ''))],
+          ['Totaal op prijspeil', ...res.map(r => eur(r.totaal))],
+          ['Totaal geïndexeerd', ...res.map(r => eur(r.totaalIndex))],
+          ['Contante waarde (NPV)', ...res.map(r => eur(r.totaalNpv))],
+          ['Piekjaar', ...res.map(r => `${r.piek.jaar} · ${eur(r.piek.bedrag)}`)],
+          ['Voorbij het laatste acceptabele jaar', ...res.map(r => String(r.teLaat))],
+          ['Voorbij de technische deadline', ...res.map(r => String(r.naDeadline))],
+          ['Niet uitgevoerd', ...res.map(r => r.nietUitgevoerd.n ? `${r.nietUitgevoerd.n} × · ${eur(r.nietUitgevoerd.kosten)}` : '—')],
+          ['Onbehandeld risico (som RPN)', ...res.map(r => r.nietUitgevoerd.rpn ? String(Math.round(r.nietUitgevoerd.rpn)) : '—')],
+          ['Gemiddelde conditie jaar 15', ...res.map(r => String(Math.round(r.conditie.jaar15 * 10) / 10))],
+          ['Gemiddelde conditie einde horizon', ...res.map(r => String(Math.round(r.conditie.eind * 10) / 10))],
+          ['Regels conditie ≥ 5 in jaar 15', ...res.map(r => String(r.conditie.slecht15))]
+        ])}
+        ${res.some(r => r.def.omschrijving) ? `<h3>6.1 Toelichting per scenario</h3><ul class="bevind">${res.filter(r => r.def.omschrijving).map(r => `<li><b>${esc(r.def.naam)}</b> — ${esc(r.def.omschrijving)}</li>`).join('')}</ul>` : ''}`;
+    } catch {}
+  }
+  const H = { onderbouwing: conditie && scen ? 7 : conditie || scen ? 6 : 5 };
+  H.bijlagen = H.onderbouwing + 1;
+  const onderbouwing = !o.onderbouwing ? '' : `<h2>${H.onderbouwing} Onderbouwing per maatregel</h2>
     <p class="note">Per regel staat waar elke waarde vandaan komt: <b>inspectie</b> (veldopname), <b>specialist</b> (mens), <b>AI-voorstel</b> (gecontroleerd door de specialist) of <b>systeemregel</b> (rekenkern uit de instellingen).</p>
     ${R.map(r => { const s = r.sp, pv = s.prov||{}, bron = k => ({excel:'inspectiebestand', mens:'technisch specialist', ai:'AI-voorstel', systeem:'systeemregel'})[pv[k]?.bron] || 'systeemregel';
       return `<div class="regel"><h4>${r.id} · ${esc(r.insp.element)}${r.insp.locatie?` – ${esc(r.insp.locatie)}`:''} <span class="tag">${r.prio||'—'}</span></h4>
@@ -134,16 +174,16 @@ function rapportHtml(o = {}) {
       ${(s.aanvullendOnderzoek||'').trim()?`<p class="note"><b>Aanvullend onderzoek:</b> ${esc(s.aanvullendOnderzoek)}</p>`:''}
       </div>`; }).join('')}`;
 
-  const bijlagen = !o.bijlagen ? '' : `<h2>6 Bijlagen</h2>
-    <h3>6.1 Herkomst en controle</h3>
+  const bijlagen = !o.bijlagen ? '' : `<h2>${H.bijlagen} Bijlagen</h2>
+    <h3>${H.bijlagen}.1 Herkomst en controle</h3>
     ${tbl(['Herkomst','Aantal vastgelegde velden'], Object.entries(bronnen).map(([b,c])=>[({excel:'Inspectiebestand',mens:'Technisch specialist',ai:'AI-voorstel',systeem:'Systeemregel'})[b]||b, String(c)]))}
     <p class="note">${aiRegels} regels zijn door de AI voorgesteld; ${flags} voorgestelde waarden zijn door de bewaking geweigerd of gesignaleerd en door de specialist beoordeeld. De volledige wijzigingshistorie staat in het model (audittrail) en in de database.</p>
-    ${!o.audit ? '' : `<h3>6.2 Laatste wijzigingen</h3>
+    ${!o.audit ? '' : `<h3>${H.bijlagen}.2 Laatste wijzigingen</h3>
     ${tbl(['Tijd','Gebruiker','Regel','Veld','Oud','Nieuw','Herkomst'], (C.state.audit||[]).slice(0,60).map(a=>[
       new Date(a.ts).toLocaleString('nl-NL'), esc(a.user||''), String(a.regel??''), esc(a.veld??''),
       esc(String(a.oud??'').slice(0,40)), esc(String(a.nieuw??'').slice(0,40)), esc(a.bron??'')]))}
     <p class="note">Weergegeven zijn de laatste 60 van ${(C.state.audit||[]).length} in dit project bewaarde wijzigingen; de database bewaart de volledige trail.</p>`}
-    <h3>6.${o.audit?'3':'2'} Begrippen</h3>
+    <h3>${H.bijlagen}.${o.audit?'3':'2'} Begrippen</h3>
     ${tbl(['Begrip','Betekenis'], [
       ['NEN 2767', 'conditiemeting: gebrek, ernst, omvang en intensiteit leiden tot een conditiescore 1–6'],
       ['FMECA', 'faalwijze- en effectanalyse: S (effect) × O (kans) × D (detecteerbaarheid) = RPN'],
@@ -151,7 +191,9 @@ function rapportHtml(o = {}) {
       ['RPN-waarde', 'risicoscore ná weging met het waardekompas; basis voor de prioriteit'],
       ['Laatste acceptabele jaar', 'uiterste uitvoeringsjaar dat volgt uit de prioriteit en het beleid van de eigenaar'],
       ['Indexering', 'kosten van prijspeil naar uitvoeringsjaar, samengesteld met de inflatievoet'],
-      ['Contante waarde (NPV)', 'toekomstige uitgaven teruggerekend naar het startjaar tegen de discontovoet'] ], 'kv')}`;
+      ['Contante waarde (NPV)', 'toekomstige uitgaven teruggerekend naar het startjaar tegen de discontovoet'],
+      ['Restlevensduur', 'resterende technische levensduur van een bouwdeel, afgeleid uit levensduur, degradatiegraad en degradatiecurve'],
+      ['Degradatiecurve', 'lineair, progressief (schade versnelt) of degressief (schade vertraagt) verloop van de aantasting'] ], 'kv')}`;
 
   const css = `
   /* het rapport is een zelfstandig document: de variabelen uit de app-stylesheet hier opnieuw zetten,
@@ -184,7 +226,7 @@ function rapportHtml(o = {}) {
   .voet { margin-top:18px; border-top:1px solid #d5dbe0; padding-top:6px; font-size:8pt; color:#5d6a75; }
   @media print { .regel, tr { page-break-inside:avoid; } h2 { page-break-before:auto; } }`;
 
-  const body = kop + samenvatting + uitgangspunten + risico + planning + onderbouwing + bijlagen +
+  const body = kop + samenvatting + uitgangspunten + risico + planning + conditie + scen + onderbouwing + bijlagen +
     `<div class="voet">${esc(K.voettekst || `${K.bedrijf} · waardegestuurd onderhoudsplan`)} · ${esc(pj.klant||'')} ${esc(pj.object||'')} · ${D()} · pagina's genummerd door de printer</div>`;
   const wordKop = o.word ? `<xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml>` : '';
   return `<!DOCTYPE html><html lang="nl"${o.word?' xmlns:w="urn:schemas-microsoft-com:office:word"':''}><head><meta charset="utf-8">
@@ -207,6 +249,8 @@ function render() {
       <label class="note">Top <select id="rapTop">${[5,10,15,25].map(x=>`<option ${x===O.topN?'selected':''}>${x}</option>`).join('')}</select> risico's</label>
     </div>
     <div class="toolbar"><label class="note"><input type="checkbox" id="rapOnd" ${O.onderbouwing?'checked':''}> onderbouwing per maatregel opnemen (${C.calc.rows.length} regels)</label>
+      <label class="note"><input type="checkbox" id="rapCon" ${O.conditie?'checked':''}> conditieprognose opnemen</label>
+      <label class="note"><input type="checkbox" id="rapScen" ${O.scenarios?'checked':''}> scenariovergelijking opnemen</label>
       <label class="note"><input type="checkbox" id="rapBij" ${O.bijlagen?'checked':''}> bijlagen opnemen</label>
       <label class="note"><input type="checkbox" id="rapAud" ${O.audit?'checked':''}> laatste wijzigingen uit de audittrail opnemen</label></div>
     <div class="grid two">
@@ -222,6 +266,8 @@ function render() {
         <li>Uitgangspunten: waardekompas, beslisregels en financiële parameters</li>
         <li>Risicobeeld: top-risico's en verdeling over de waardeaspecten</li>
         <li>Meerjarenplanning per jaar in prijspeil, geïndexeerd, incl. btw en contante waarde</li>
+        <li>Conditieprognose: NEN 2767 over de horizon, met het plan tegenover niets doen</li>
+        <li>Scenariovergelijking: kosten, risicogevolg en conditiebeeld per beleidskeuze</li>
         <li>Onderbouwing per maatregel met de herkomst van elke waarde</li>
         <li>Bijlagen: herkomst en controle, laatste wijzigingen, begrippenlijst</li></ol>
         <p class="note">Tip: kies bij Printen “Opslaan als PDF”, A4 staand, marges standaard. Achtergrondkleuren aanzetten geeft de gekleurde koppen mee.</p></div>
@@ -236,6 +282,8 @@ function render() {
   $('#rapTop').onchange = e => zet('topN', +e.target.value);
   $('#rapOnd').onchange = e => zet('onderbouwing', e.target.checked);
   $('#rapBij').onchange = e => zet('bijlagen', e.target.checked);
+  $('#rapCon').onchange = e => zet('conditie', e.target.checked);
+  $('#rapScen').onchange = e => zet('scenarios', e.target.checked);
   $('#rapAud').onchange = e => zet('audit', e.target.checked);
   $('#rapPrint').onclick = () => { const w = fr.contentWindow; w.focus(); w.print(); };
   $('#rapWord').onclick = () => download(bestandsnaam('doc'), rapportHtml({ ...O, word: true }), 'application/msword');

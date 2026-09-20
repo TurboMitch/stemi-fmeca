@@ -31,7 +31,7 @@ const ctx = vm.createContext({ ...win, document: doc, globalThis: win, Response:
 ctx.window = ctx; ctx.globalThis = ctx;
 
 const laad = f => vm.runInContext(fs.readFileSync(path.join(root, 'public/js', f), 'utf8'), ctx, { filename: f });
-laad('core.js'); laad('prep.js'); laad('ui-mjop.js'); laad('ui-rapport.js');
+laad('core.js'); laad('prep.js'); laad('ui-mjop.js'); laad('ui-scenario.js'); laad('ui-rapport.js');
 const C = ctx.STEMI, P = ctx.STEMI_PREP;
 ok('core.js en prep.js laden in Node', !!C && !!P);
 
@@ -135,20 +135,84 @@ ok('core.js en prep.js laden in Node', !!C && !!P);
   const q = P.quality([{ element: 'A', constatering: 'B', intensiteit: 'Gevorderd', hoevTotaal: 10, hoevGebrek: 1, kengetal: 5 }, { element: 'C' }]);
   ok('datakwaliteit rekent vulling per veld', q.items.find(i => i.k === 'element').ok === 2 && q.items.find(i => i.k === 'kengetal').ok === 1);
 
+  // ---------- T-bepaling uit restlevensduur ----------
+  ok('curve lineair: restfactor = 1 - d', bijna(C.curveFactor('lineair', 0.4), 0.6, 1e-9));
+  ok('curve progressief: restfactor = (1-d)^2', bijna(C.curveFactor('progressief', 0.3), 0.49, 1e-9));
+  ok('curve degressief: restfactor = wortel(1-d)', bijna(C.curveFactor('degressief', 0.36), 0.8, 1e-9));
+  const tDak = C.bepaalT({ bouwdeel: 'Dakafwerkingen', intensiteit: 'Gevorderd', ontwikkelingKlasse: 'Progressief', ernst: 'Ernstig' }, { bouwdeel: 'Dakafwerkingen' });
+  ok('T uit restlevensduur klopt met de handberekening (25 x 0,09 / 1,6 x 0,6 = 0,8 jr)', tDak.jaar === 0.8, String(tDak.jaar));
+  ok('T-afleiding noemt levensduur, degradatie, curve, ontwikkeling en ernst',
+    ['levensduur', 'degradatie', 'curve', 'ontwikkeling', 'ernst'].every(w => tDak.uitleg.includes(w)), tDak.uitleg);
+  const tGunstig = C.bepaalT({ bouwdeel: 'Dakafwerkingen', intensiteit: 'Beginstadium', ontwikkelingKlasse: 'Stabiel', ernst: 'Gering' }, { bouwdeel: 'Dakafwerkingen' });
+  ok('gunstige factoren tillen T niet boven de resterende technische levensduur (25 x 0,85 = 21,3)', tGunstig.jaar === 21.3, String(tGunstig.jaar));
+  const tLang = C.bepaalT({ bouwdeel: 'Hoofddraagconstructie', intensiteit: 'Beginstadium' }, { bouwdeel: 'Hoofddraagconstructie' });
+  ok('T wordt afgekapt op de horizon', tLang.jaar === Pp.horizon, String(tLang.jaar));
+  const tCond = C.bepaalT({ bouwdeel: 'Verlichtingsarmaturen', conditie: 5 }, { bouwdeel: 'Verlichtingsarmaturen' });
+  ok('conditiescore alleen is genoeg voor T (15 x 0,2 = 3 jr)', tCond.jaar === 3, String(tCond.jaar));
+  const tVerst = C.bepaalT({ bouwdeel: 'Verlichtingsarmaturen', intensiteit: 'Beginstadium', conditie: 5 }, { bouwdeel: 'Verlichtingsarmaturen' });
+  ok('de verst gevorderde van intensiteit en conditie telt', tVerst.jaar === 3, String(tVerst.jaar));
+  const tGeen = C.bepaalT({ bouwdeel: 'Daken' }, { bouwdeel: 'Daken' });
+  ok('zonder intensiteit en conditie geeft het model geen T', tGeen.jaar === null && tGeen.bron === 'onbekend', tGeen.uitleg);
+  const tCode = C.bepaalT({ nenCode: 'B05EC01', bouwdeel: 'Daken', intensiteit: 'Beginstadium' }, { bouwdeel: 'Daken' });
+  ok('een vaste regel per gebrekcode gaat voor het model', tCode.bron === 'code' && tCode.jaar === 0.5, `${tCode.bron} ${tCode.jaar}`);
+  ok('T-klasse volgt uit het aantal jaren', C.tKlasseVanJaar(0) === 'Reeds aanwezig' && C.tKlasseVanJaar(0.8) === '1–3 jaar' && C.tKlasseVanJaar(30) === '> 5 jaar',
+    [C.tKlasseVanJaar(0), C.tKlasseVanJaar(0.8), C.tKlasseVanJaar(30)].join(' / '));
+  C.state.settings.rules.tRegels.actief = false;
+  ok('T-model uitzetten laat alleen de vaste regels over', C.bepaalT({ bouwdeel: 'Daken', intensiteit: 'Gevorderd' }, { bouwdeel: 'Daken' }).jaar === null);
+  C.state.settings.rules.tRegels.actief = true; C.recompute();
+
+  // ---------- conditieprognose ----------
+  C.state.maatregelen = [{ id: 'cp1', regelId: C.calc.rows[0].id, handeling: 'Vervangen gevelbeplating', jaar: start + 5, kosten: 1000, cyclus: null, tot: null }];
+  C.recompute();
+  const pg = C.conditiePrognose();
+  ok('conditieprognose levert een reeks per regel over de hele horizon', pg.rijen.length === C.calc.rows.length && pg.rijen[0].met.length === C.calc.jaren.length);
+  ok('zonder ingrijpen loopt de conditie naar 6 en blijft daar', pg.gemZonder[pg.gemZonder.length - 1] === 6 && pg.rijen[0].zonder.every((v, i, a) => i === 0 || v >= a[i - 1]));
+  ok('vervangen zet de conditie terug naar 1 in het jaar van de handeling', pg.rijen[0].met[5] === 1, String(pg.rijen[0].met[5]));
+  ok('vóór de handeling is de conditie al verslechterd', pg.rijen[0].met[4] > pg.rijen[0].met[0], `${pg.rijen[0].met[0]} → ${pg.rijen[0].met[4]}`);
+  ok('na vervangen degradeert de conditie opnieuw', pg.rijen[0].met[10] > 1, String(pg.rijen[0].met[10]));
+  ok('herstelniveau leest de handeling: vervangen 1, herstellen 2, conserveren een stap',
+    C.herstelEffect('Vervangen dakbedekking', 5).c === 1 && C.herstelEffect('Herstellen scheuren', 5).c === 2 && C.herstelEffect('Conserverend schilderwerk', 5).c === 4);
+  ok('restjaren vanuit een conditie volgen de curve', bijna(C.restjarenVan(2, 25, 'lineair'), 20, 0.01) && bijna(C.restjarenVan(2, 25, 'progressief'), 16, 0.01),
+    `${C.restjarenVan(2, 25, 'lineair')} / ${C.restjarenVan(2, 25, 'progressief')}`);
+
+  // ---------- onderhoudsscenario's ----------
+  const sBasis = C.evalueerScenario({ naam: 'basis', strategie: 'gepland' });
+  ok('scenario “zoals gepland” komt uit op het MJOP-totaal', bijna(sBasis.totaal, C.calc.totaal, 1), `${Math.round(sBasis.totaal)} vs ${Math.round(C.calc.totaal)}`);
+  const sP1 = C.evalueerScenario({ naam: 'alleen P1', strategie: 'gepland', prios: ['P1'] });
+  ok('een prioriteitsgrens laat regels buiten de scope', sP1.nietUitgevoerd.n === C.calc.rows.filter(r => r.prio !== 'P1').length && sP1.nietUitgevoerd.rpn > 0,
+    `${sP1.nietUitgevoerd.n} niet uitgevoerd, RPN ${Math.round(sP1.nietUitgevoerd.rpn)}`);
+  ok('buiten de scope gelaten kosten zitten niet in het totaal', sP1.totaal < sBasis.totaal, `${Math.round(sP1.totaal)} < ${Math.round(sBasis.totaal)}`);
+  const sPlaf = C.evalueerScenario({ naam: 'plafond', strategie: 'gepland', plafond: 6000, maxSchuif: 10 });
+  ok('een jaarplafond schuift handelingen naar later', sPlaf.geschoven > 0, String(sPlaf.geschoven));
+  ok('uitstellen maakt hetzelfde werk geïndexeerd duurder', sPlaf.totaalIndex > sBasis.totaalIndex, `${Math.round(sPlaf.totaalIndex)} > ${Math.round(sBasis.totaalIndex)}`);
+  ok('uitstellen wordt gemeld als risico', sPlaf.teLaat > 0 || sPlaf.naDeadline > 0, `te laat ${sPlaf.teLaat}, na deadline ${sPlaf.naDeadline}`);
+  ok('een cyclusherhaling wordt niet als uitstel geteld', sBasis.teLaat === C.calc.rows.filter(r => { const m = r.maatregelen[0]; return m && m.jaar != null && r.laatsteJaar != null && m.jaar > r.laatsteJaar; }).length,
+    `${sBasis.teLaat} gemeld, ${sBasis.posten.filter(p => p.laatsteJaar != null && p.jaar > p.laatsteJaar).length} posten voorbij het laatste jaar (incl. herhalingen)`);
+  ok('elk scenario levert een conditiebeeld', sBasis.conditie.jaar15 >= 1 && sBasis.conditie.jaar15 <= 6, String(sBasis.conditie.jaar15));
+  ok('scenario laat de projectdata ongemoeid', C.state.maatregelen.length === 1 && C.state.maatregelen[0].jaar === start + 5);
+  const sLaatste = C.evalueerScenario({ naam: 'laatste', strategie: 'laatste' });
+  ok('strategie “laatste acceptabele jaar” plant op dat jaar', sLaatste.posten.every(p => { const r = C.calc.rows.find(x => x.id === p.regel); return r.laatsteJaar == null || p.jaar >= r.laatsteJaar || p.cyclisch; }));
+  const aV = C.state.audit.length, k = C.pasScenarioToe(sPlaf);
+  ok('een scenario toepassen verzet de jaren en logt dat', k > 0 && C.state.audit.length === aV + k, `${k} verschoven`);
+  C.state.maatregelen = []; C.recompute();
+
   // ---------- MJOP-rapport ----------
   C.state.project = { klant: 'Testklant', object: 'Loods 1', adres: 'Teststraat 1', status: 'actief', omschrijving: 'unit-test' };
-  const rap = ctx.STEMI_UI.rapportHtml({ jaren: 15, topN: 10, onderbouwing: true, bijlagen: true, audit: true });
+  const rap = ctx.STEMI_UI.rapportHtml({ jaren: 15, topN: 10, onderbouwing: true, bijlagen: true, audit: true, conditie: true, scenarios: true });
   ok('rapport is een volledig HTML-document', rap.startsWith('<!DOCTYPE html>') && rap.trim().endsWith('</html>'));
-  ['Managementsamenvatting', 'Uitgangspunten', 'Risicobeeld', 'Meerjarenplanning', 'Onderbouwing per maatregel', 'Bijlagen', 'Testklant', 'Loods 1']
+  ['Managementsamenvatting', 'Uitgangspunten', 'Risicobeeld', 'Meerjarenplanning', 'Conditieprognose', 'Scenariovergelijking', 'Onderbouwing per maatregel', 'Bijlagen', 'Testklant', 'Loods 1']
     .forEach(t => ok('rapport bevat "' + t + '"', rap.includes(t)));
   ok('rapport bevat geen lege waarden (undefined/NaN)', !/undefined|NaN/.test(rap), (rap.match(/.{40}(undefined|NaN).{40}/) || [''])[0]);
   ok('rapport bevat de prioriteitsverdeling en een risicotabel', rap.includes('Prioriteitsverdeling') && rap.includes('RPN'));
   ok('rapport toont het prijspeil en de indexering', rap.includes('Prijspeil') && rap.includes('Contante waarde'));
-  const rapW = ctx.STEMI_UI.rapportHtml({ jaren: 10, topN: 5, onderbouwing: false, bijlagen: true, audit: false, word: true });
+  const rapW = ctx.STEMI_UI.rapportHtml({ jaren: 10, topN: 5, onderbouwing: false, bijlagen: true, audit: false, conditie: true, scenarios: true, word: true });
   ok('Word-variant heeft de Office-namespace', rapW.includes('urn:schemas-microsoft-com:office:word'));
   ok('Word-variant gebruikt tabelstaven in plaats van SVG', !rapW.includes('<svg') && rapW.includes('class="bar"'));
   ok('rapport zonder onderbouwing laat dat hoofdstuk weg', !rapW.includes('Onderbouwing per maatregel'));
   ok('SVG-variant gebruikt wel een diagram', rap.includes('<svg'));
+  ok('rapport nummert de hoofdstukken door met conditie en scenario\'s erbij', /<h2>5 Conditieprognose/.test(rap) && /<h2>6 Scenariovergelijking/.test(rap) && /<h2>7 Onderbouwing/.test(rap) && /<h2>8 Bijlagen/.test(rap));
+  const rapKort = ctx.STEMI_UI.rapportHtml({ jaren: 10, topN: 5, onderbouwing: true, bijlagen: true, audit: false, conditie: false, scenarios: false });
+  ok('zonder conditie en scenario\'s schuift de nummering terug', /<h2>5 Onderbouwing/.test(rapKort) && /<h2>6 Bijlagen/.test(rapKort));
 
   console.log(`\n${mislukt ? mislukt + ' test(s) MISLUKT' : 'alle unit-tests geslaagd'}`);
   process.exit(mislukt ? 1 : 0);

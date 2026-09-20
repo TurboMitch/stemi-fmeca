@@ -43,10 +43,32 @@ function renderSysteem() {
     <div class="tablewrap"><table><thead><tr><th>ID</th><th>Element</th><th>O</th><th>D</th><th>T</th>${ASP_SHORT.map(a=>`<th>E ${a}</th>`).join('')}${ASP_SHORT.map(a=>`<th>W ${a}</th>`).join('')}<th>S tech</th><th>RPN tech</th><th>S waarde</th><th>RPN waarde</th><th>Basis</th><th>Safety</th><th>Compl.</th><th>T-prio</th><th>NEN signaal</th><th>Definitief</th><th>Uiterlijk</th><th>Deadline</th><th>Dominant tech</th><th>Dominant waarde</th><th>Kosten</th><th>Bron</th><th>Status</th></tr></thead><tbody>
     ${C.calc.rows.map(r=>`<tr><td>${r.id}</td><td>${esc(r.insp.element)}</td><td class="num">${r.O??''}</td><td class="num">${r.D??''}</td><td class="num">${r.Tjaar??''}</td>${r.effect.map(e=>`<td class="num">${e}</td>`).join('')}${r.impact.map(e=>`<td class="num groen">${+e.toFixed(1)}</td>`).join('')}<td class="num">${r.Stech}</td><td class="num">${r.RPNtech??''}</td><td class="num">${+r.Swaarde.toFixed(1)}</td><td class="num"><b>${r.RPNwaarde==null?'':Math.round(r.RPNwaarde)}</b></td><td>${pill(r.basis)}</td><td>${pill(r.safety)}</td><td>${pill(r.compliance)}</td><td>${pill(r.tPrio)}</td><td class="wrap">${r.nenSignaal?'<span class="warn">Expliciete beoordeling</span>':''}</td><td>${pill(r.prio)}</td><td>${r.laatsteJaar??'—'}</td><td>${r.deadline??'—'}</td><td>${esc(r.domTech)}</td><td>${esc(r.domWaarde)}</td><td class="num">${eur(r.definitieveKosten)}</td><td>${r.kostenbron}</td><td>${r.status}</td></tr>`).join('')}
     </tbody></table></div>
+    ${conditieHtml()}
     <h3>Actieve beslisregels</h3>
     <div class="grid two"><div class="card"><b>RPN waarde → basisprioriteit</b><br>${R.rpn.map(x=>`${x.prio} ≥ ${x.min}`).join(' · ')} · anders P5<br><br><b>Safety-override</b> (effect Veiligheid): ${R.safety.map(x=>`${x.prio} ≥ ${x.min}`).join(' · ')}<br><b>Compliance-override</b>: ${R.compliance.map(x=>`${x.prio} ≥ ${x.min}`).join(' · ')}</div>
     <div class="card"><b>T-prioriteit</b>: ${R.tPrio.map(x=>`${x.prio} ≤ ${x.max} jr`).join(' · ')} · anders P5<br><b>Definitief</b> = strengste van basis, safety, compliance, T.<br><b>Laatste acceptabele jaar</b>: ${C.PRIOS.map(p=>`${p} ${R.laatsteJaar[p]==null?'—':'+'+R.laatsteJaar[p]}`).join(' · ')}.<br><b>Technische deadline</b> = start + ⌈T⌉. <button class="btn ghost small" data-go="eigenaar">Aanpassen in wizard</button></div></div>`;
   $$('[data-go]').forEach(b => b.onclick = () => window.STEMI_UI.switchTab(b.dataset.go));
+  const cn = $('#cpN'); if (cn) cn.onchange = e => { C.cfg.prognoseJaren = +e.target.value; C.saveCfg(); renderSysteem(); };
+}
+
+/** conditieprognose over de horizon: met de geplande handelingen versus niets doen */
+function conditieHtml() {
+  const n = C.cfg.prognoseJaren || 15;
+  let pg; try { pg = C.conditiePrognose(); } catch (e) { return `<p class="note warn">Conditieprognose kon niet worden berekend: ${esc(e.message)}</p>`; }
+  if (!pg.rijen.length) return '';
+  const jaren = pg.jaren.slice(0, n), r1 = (a) => a.slice(0, n).map(v => Math.round(v * 10) / 10);
+  const kleur = c => c >= 5.5 ? 'warn' : c >= 4.5 ? 'oranje' : c >= 3 ? '' : 'groen';
+  const bron = C.calc.rows.reduce((a,r)=>{ const b=r.tInfo?.bron||'onbekend'; a[b]=(a[b]||0)+1; return a; },{});
+  return `<h3 style="margin-top:18px">Conditieprognose ${jaren[0]}–${jaren[jaren.length-1]}</h3>
+    <p class="note">NEN 2767-conditie per jaar${pg.gewogen?' (gewogen naar hoeveelheid)':''}: met de geplande handelingen tegenover niets doen. De conditie loopt naar 6 op het faalmoment T; een handeling zet de conditie terug (vervangen → 1, herstellen → 2, reinigen/conserveren → een stap beter) en daarna begint de degradatie opnieuw. T komt ${Object.entries(bron).map(([b,c])=>`${c}× uit ${({code:'een vaste regel per gebrekcode',model:'het restlevensduurmodel',onbekend:'niets (specialist bepaalt)'})[b]||b}`).join(', ')}.</p>
+    <div class="toolbar"><label class="note">Toon <select id="cpN">${[10,15,20,30,40].map(x=>`<option ${x===n?'selected':''}>${x}</option>`).join('')}</select> jaar</label><span class="spacer"></span><span class="note">Gemiddelde conditie in ${jaren[jaren.length-1]}: <b>${Math.round(pg.gemMet[n-1]*10)/10}</b> met plan tegenover <b>${Math.round(pg.gemZonder[n-1]*10)/10}</b> zonder ingrijpen</span></div>
+    <div class="card">${window.STEMI_UI.lineChart(jaren, [{naam:'Met de geplande handelingen', waarden:r1(pg.gemMet)}, {naam:'Zonder ingrijpen', waarden:r1(pg.gemZonder), stippel:true}])}</div>
+    <div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>ID</th><th>Element</th><th>Prio</th><th>Conditie nu</th><th>T (jr)</th><th>Levensduur</th><th>Curve</th>${jaren.map(j=>`<th>${j}</th>`).join('')}</tr></thead><tbody>
+    ${pg.rijen.slice(0,120).map(x=>`<tr><td>${x.id}</td><td>${esc(x.element)}</td><td>${pill(x.prio)}</td><td class="num">${x.nu}</td><td class="num">${x.T==null?'—':Math.round(x.T*10)/10}</td><td class="num note">${x.L}</td><td class="note">${esc(x.vorm)}</td>${x.met.slice(0,n).map(c=>`<td class="num ${kleur(c)}">${Math.round(c*10)/10}</td>`).join('')}</tr>`).join('')}
+    <tr><td colspan="7"><b>Gemiddeld met plan</b></td>${r1(pg.gemMet).map(c=>`<td class="num ${kleur(c)}"><b>${c}</b></td>`).join('')}</tr>
+    <tr><td colspan="7" class="note">Gemiddeld zonder ingrijpen</td>${r1(pg.gemZonder).map(c=>`<td class="num note">${c}</td>`).join('')}</tr>
+    <tr><td colspan="7" class="note">Aantal regels conditie ≥ 5 (met plan)</td>${pg.slechtMet.slice(0,n).map(v=>`<td class="num note">${v}</td>`).join('')}</tr>
+    </tbody></table></div>${pg.rijen.length>120?`<p class="note">Eerste 120 van ${pg.rijen.length} regels.</p>`:''}`;
 }
 
 // ---------- Instellingen ----------
@@ -150,7 +172,7 @@ function renderUitleg() {
   $('#tab-uitleg').innerHTML = `
     <h2>Uitleg</h2><p class="sub">Leeswijzer, rollen & inputmomenten (08) en woordenlijst (07).</p>
     <div class="card"><h3 style="margin-top:0">Leeswijzer</h3><p>NEN 2767 → FMECA → NEN 8026 waardekompas → risico & tijd → MJOP.</p>
-    <ol><li><b>Eigenaar / assetmanager</b> (paars/blauw) – legt via de wizard het instellingenprofiel vast: profielbibliotheek (09), scorekaarten & beslisregels (06), objectparameters (01). Neemt later MJOP-besluiten.</li><li><b>NEN 2767-inspecteur</b> (geel) – levert objectieve technische evidence als data (ruw of gestandaardiseerd) in 02.</li><li><b>Technisch specialist / ME</b> (oranje) – in 03 vult de AI alle velden (faalwijze, O, D, T, effecten, maatregel, restrisico, kosten) op basis van 02 en de gebrekenbibliotheek; verifieert en overschrijft onderbouwd; de specialist controleert. Elke waarde heeft een herkomst en historie.</li><li><b>Systeemmodel</b> (groen, 04) – rekenkern op het instellingenprofiel: technisch én waardegestuurd risico, overrides, T-prioriteit, definitieve prioriteit.</li><li><b>Assetmanager-besluit</b> (blauw) – maatregel, jaar, budget, acceptatie restrisico.</li><li><b>MJOP</b> (groen, 05) – handelingen met moment, kosten en cyclus over de horizon.</li></ol></div>
+    <ol><li><b>Eigenaar / assetmanager</b> (paars/blauw) – legt via de wizard het instellingenprofiel vast: profielbibliotheek (09), scorekaarten & beslisregels (06), objectparameters (01). Neemt later MJOP-besluiten.</li><li><b>NEN 2767-inspecteur</b> (geel) – levert objectieve technische evidence als data (ruw of gestandaardiseerd) in 02.</li><li><b>Technisch specialist / ME</b> (oranje) – in 03 vult de AI alle velden (faalwijze, O, D, T, effecten, maatregel, restrisico, kosten) op basis van 02 en de gebrekenbibliotheek; verifieert en overschrijft onderbouwd; de specialist controleert. Elke waarde heeft een herkomst en historie.</li><li><b>Systeemmodel</b> (groen, 04) – rekenkern op het instellingenprofiel: technisch én waardegestuurd risico, overrides, T-prioriteit, definitieve prioriteit.</li><li><b>Assetmanager-besluit</b> (blauw) – maatregel, jaar, budget, acceptatie restrisico.</li><li><b>MJOP</b> (groen, 05) – handelingen met moment, kosten en cyclus over de horizon, op prijspeil; indexering, btw, contante waarde en budgetsturing rekent het model erbij.</li><li><b>Scenario's</b> (07) – dezelfde onderhoudsbehoefte onder verschillende beleidskeuzes: kosten, wat er met het risico gebeurt en hoe de technische staat zich ontwikkelt.</li><li><b>Rapport</b> (06) – het volledige klantrapport, met per maatregel de onderbouwing en de herkomst van elke waarde.</li></ol><h3 style="margin-top:14px">Hoe het faalmoment T tot stand komt</h3><p class="note">T is de verwachte tijd tot functieverlies en bepaalt de technische deadline en de T-prioriteit. Er zijn drie bronnen, in deze volgorde: (1) een <b>vaste regel per gebrekcode</b> in het instellingenprofiel; (2) het <b>restlevensduurmodel</b>: T = levensduur van de bouwdeelcategorie × restfactor van de degradatiecurve ÷ ontwikkelsnelheid × ernstfactor × omvangfactor, begrensd op de resterende technische levensduur en op de horizon; (3) <b>de specialist</b>, die het voorstel overneemt of onderbouwd afwijkt. De degradatiegraad komt uit de NEN-intensiteit met de conditiescore als kruiscontrole: de verst gevorderde van de twee telt. Alle coëfficiënten staan in de wizard (stap 3), zodat de methodiek beleid van de organisatie blijft en geen vaste aanname van de software.</p><h3>Conditieprognose</h3><p class="note">De NEN 2767-conditie loopt van de huidige score naar 6 op het faalmoment T. Een handeling zet de conditie terug — vervangen naar 1, herstellen naar 2, reinigen of conserveren een stap — waarna de degradatie opnieuw begint over de levensduur van het bouwdeel. Tab 04 zet het geplande onderhoud tegenover niets doen; dat maakt zichtbaar wat uitstellen technisch betekent en niet alleen financieel.</p></div>
     <h3>08 Rollen, inputmomenten en verantwoordelijkheden</h3>
     <div class="tablewrap"><table><thead><tr><th>Fase</th><th class="wrap">Input / beslissing</th><th>Wie</th><th>Methodiek</th><th>Kleur</th><th>Output</th><th>Verantw.</th></tr></thead><tbody>${Rl.map(r=>`<tr><td>${esc(r.fase)}</td><td class="wrap">${esc(r.input)}</td><td>${esc(r.wie)}</td><td>${esc(r.methodiek)}</td><td>${esc(r.kleur)}</td><td>${esc(r.output)}</td><td>${esc(r.verantwoordelijkheid)}</td></tr>`).join('')}</tbody></table></div>
     <h3>07 Woordenlijst</h3>
@@ -166,17 +188,48 @@ function exportXlsx() {
   const s03 = [['ID','Element','Faalwijze','bron','O','bron','Onderbouwing O','D','bron','Onderbouwing D','T-klasse','T jaar','bron','Onderbouwing T',...ASP.map(a=>'Effect '+a),'bron effecten','Onderbouwing effecten','Maatregel','bron','Rest S','Rest O','Rest D','Rest toelichting','Kosten specialist','bron','Onderbouwing kosten','Definitieve kosten','Scope-override','Onderbouwing scope','Aanvullend onderzoek','AI-model','AI vertrouwen','AI onzekerheden']];
   R.forEach(r=>{const s=r.sp,p=s.prov||{},ai=C.state.ai[r.id]; const b=k=>p[k]?.bron||'sys'; s03.push([r.id,r.insp.element,r.faalwijze,b('faalwijze'),r.O,b('O'),s.onderbouwingO,r.D,b('D'),s.onderbouwingD,r.Tklasse,r.Tjaar,b('Tjaar'),s.onderbouwingT,...r.effect,b('effect'),s.onderbouwingEffect,s.maatregel,b('maatregel'),s.restS,s.restO,s.restD,s.restToelichting,s.kostenSpecialist,b('kostenSpecialist'),s.onderbouwingKosten,r.definitieveKosten,s.scopeOverride,s.onderbouwingScope,s.aanvullendOnderzoek,ai?._model||'',ai?.vertrouwen||'',(ai?.onzekerheden||[]).join('; ')]);});
   const s04 = [['ID','Element','O','D','T jaar',...ASP.map(a=>'Effect '+a),...ASP.map(a=>'Waarde-impact '+a),'S tech','RPN tech','S waarde','RPN waarde','Basisprio','Safety','Compliance','T-prio','NEN signaal','Definitieve prioriteit','Laatste acceptabele jaar','Technische deadline','Dominant tech','Dominant waarde','Kosten','Kostenbron','Status']];
-  R.forEach(r=>s04.push([r.id,r.insp.element,r.O,r.D,r.Tjaar,...r.effect,...r.impact,r.Stech,r.RPNtech,r.Swaarde,r.RPNwaarde,r.basis,r.safety,r.compliance,r.tPrio,r.nenSignaal,r.prio,r.laatsteJaar,r.deadline,r.domTech,r.domWaarde,r.definitieveKosten,r.kostenbron,r.status]));
+  s04[0].splice(5, 0, 'T bron', 'T levensduur bouwdeel', 'T afleiding');
+  R.forEach(r=>s04.push([r.id,r.insp.element,r.O,r.D,r.Tjaar,r.tInfo?.bron||'',r.tInfo?.L??'',r.tInfo?.uitleg||'',...r.effect,...r.impact,r.Stech,r.RPNtech,r.Swaarde,r.RPNwaarde,r.basis,r.safety,r.compliance,r.tPrio,r.nenSignaal,r.prio,r.laatsteJaar,r.deadline,r.domTech,r.domWaarde,r.definitieveKosten,r.kostenbron,r.status]));
   const s05 = [['ID','Element','Prioriteit','Laatste acceptabele jaar','Technische deadline','Handeling','Jaar','Kosten (prijspeil '+(S.params.prijspeil??S.params.startjaar)+')','Kosten geïndexeerd','Indexfactor','Cyclus','Tot',...C.calc.jaren]];
   R.forEach(r=>r.maatregelen.forEach(m=>s05.push([r.id,r.insp.element,r.prio,r.laatsteJaar,r.deadline,m.handeling,m.jaar,m.kosten,m.jaar!=null&&m.kosten!=null?m.kosten*(C.calc.idx[m.jaar]??C.indexFactor(m.jaar)):'',m.jaar!=null?Math.round((C.calc.idx[m.jaar]??C.indexFactor(m.jaar))*10000)/10000:'',m.cyclus,m.tot,...C.calc.jaren.map(j=>m.jaren.includes(j)?(m.kosten||0):0)])));
   s05.push(['','Totaal prijspeil','','','','','',C.calc.totaal,'','','','',...C.calc.perJaar]);
   s05.push(['','Totaal geïndexeerd','','','','','','',C.calc.totaalIndex,'','','',...C.calc.perJaarIndex]);
   s05.push(['','Totaal incl. btw','','','','','','','','','','',...C.calc.perJaarBtw]);
   s05.push(['','Contante waarde (NPV)','','','','','','','','','','',...C.calc.perJaarNpv]);
+  let s07 = [['Conditieprognose kon niet worden berekend']];
+  try { const pg = C.conditiePrognose();
+    s07 = [['ID','Element','Prioriteit','Conditie nu','T (jaar)','Levensduur bouwdeel','Curve','Gewicht (hoeveelheid)','', ...C.calc.jaren],
+      ...pg.rijen.map(x=>[x.id,x.element,x.prio,x.nu,x.T,x.L,x.vorm,x.gewicht,'met plan',...x.met]),
+      ...pg.rijen.map(x=>[x.id,x.element,x.prio,x.nu,x.T,x.L,x.vorm,x.gewicht,'zonder ingrijpen',...x.zonder]),
+      [], ['','Gemiddeld met plan','','','','','','','',...pg.gemMet.map(v=>Math.round(v*100)/100)],
+      ['','Gemiddeld zonder ingrijpen','','','','','','','',...pg.gemZonder.map(v=>Math.round(v*100)/100)],
+      ['','Regels conditie >= 5 met plan','','','','','','','',...pg.slechtMet]];
+  } catch (e) { s07 = [['Conditieprognose kon niet worden berekend', e.message]]; }
+  let s08 = [['Geen scenario\'s beschikbaar']];
+  try { const res = window.STEMI_UI.evalueerAlle();
+    s08 = [['Kerncijfer', ...res.map(r=>r.def.naam)],
+      ['Aanpak', ...res.map(r=>(C.SCENARIO_STRATEGIE.find(x=>x[0]===r.def.strategie)||[])[1]||r.def.strategie)],
+      ['Alleen prioriteiten', ...res.map(r=>(r.def.prios||[]).join(' ')||'alle')],
+      ['Budgetplafond per jaar', ...res.map(r=>r.def.plafond??'')],
+      ['Totaal prijspeil', ...res.map(r=>r.totaal)], ['Totaal geïndexeerd', ...res.map(r=>r.totaalIndex)],
+      ['Contante waarde (NPV)', ...res.map(r=>r.totaalNpv)],
+      ['Piekjaar', ...res.map(r=>r.piek.jaar)], ['Piekbedrag', ...res.map(r=>r.piek.bedrag)],
+      ['Handelingen verschoven', ...res.map(r=>r.geschoven)],
+      ['Voorbij laatste acceptabele jaar', ...res.map(r=>r.teLaat)], ['Voorbij technische deadline', ...res.map(r=>r.naDeadline)],
+      ['Niet uitgevoerd (aantal)', ...res.map(r=>r.nietUitgevoerd.n)], ['Niet uitgevoerd (kosten)', ...res.map(r=>r.nietUitgevoerd.kosten)],
+      ['Onbehandeld risico (som RPN)', ...res.map(r=>Math.round(r.nietUitgevoerd.rpn))],
+      ['Gemiddelde conditie jaar 5', ...res.map(r=>Math.round(r.conditie.jaar5*100)/100)],
+      ['Gemiddelde conditie jaar 15', ...res.map(r=>Math.round(r.conditie.jaar15*100)/100)],
+      ['Gemiddelde conditie einde horizon', ...res.map(r=>Math.round(r.conditie.eind*100)/100)],
+      ['Regels conditie >= 5 in jaar 15', ...res.map(r=>r.conditie.slecht15)],
+      [], ['Omschrijving', ...res.map(r=>r.def.omschrijving||'')],
+      [], ['Kosten per jaar (geïndexeerd)'], ['Jaar', ...res.map(r=>r.def.naam)],
+      ...C.calc.jaren.map((j,i)=>[j, ...res.map(r=>r.perJaarIndex[i])])];
+  } catch (e) { s08 = [['Scenario\'s konden niet worden berekend', e.message]]; }
   const s06 = [['Beslisregels (JSON)'],[JSON.stringify(S.rules)],[],['O-score','Classificatie','Omschrijving'],...S.scorekaarten.O.map(o=>[o.score,o.classificatie||o.kans,o.omschrijving||o.betekenis]),[],['D-score','Detecteerbaarheid','Criterium'],...S.scorekaarten.D.map(d=>[d.score,d.detect,d.criterium]),[],['S-score','Generiek',...ASP],...S.scorekaarten.S.map(s=>[s.score,s.generiek,...s.aspecten])];
   const s09 = [['Aspect',...Object.keys(S.profielen)],...ASP.map((a,i)=>[a,...Object.keys(S.profielen).map(p=>S.profielen[p][i])])];
   const sA = [['Tijd','Regel','Veld','Oud','Nieuw','Bron','Model','Opmerking'],...C.state.audit.map(a=>[a.ts,a.regel??'',a.veld??'',JSON.stringify(a.oud??''),JSON.stringify(a.nieuw??''),a.bron??'',a.model??'',a.opmerking??''])];
-  [['01 Eigenaar-AM',s01],['02 Inspectie',s02],['03 Specialist',s03],['04 Systeemmodel',s04],['05 MJOP',s05],['06 Scorekaarten',s06],['09 Profielbibliotheek',s09],['Audittrail',sA]].forEach(([n,d])=>XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(d), n));
+  [['01 Eigenaar-AM',s01],['02 Inspectie',s02],['03 Specialist',s03],['04 Systeemmodel',s04],['05 MJOP',s05],['06 Scorekaarten',s06],['07 Conditieprognose',s07],['08 Scenarios',s08],['09 Profielbibliotheek',s09],['Audittrail',sA]].forEach(([n,d])=>XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(d), n));
   XLSX.writeFile(wb, `STEMI_FMECA_MJOP_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 window.STEMI_UI = window.STEMI_UI || {}; Object.assign(window.STEMI_UI, { renderOverzicht, renderSysteem, renderInstellingen, renderUitleg, exportXlsx });

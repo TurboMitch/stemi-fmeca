@@ -42,6 +42,17 @@ function defaultRules() {
     dVoorstel: {'Volledig':2,'Deels':5,'Niet':8},
     safetyAspect: 'Veiligheid', complianceAspect: 'Compliance',
     tKlassen: [{klasse:'Reeds aanwezig',jaar:0},{klasse:'< 1 jaar',jaar:0.5},{klasse:'1–3 jaar',jaar:2},{klasse:'3–5 jaar',jaar:4},{klasse:'> 5 jaar',jaar:8}],
+    tRegels: {
+      actief: true,
+      levensduur: clone(seed?.levensduur || {}), levensduurDefault: 30,
+      curve: clone(seed?.degradatiecurve || {}), curveDefault: 'lineair',
+      intensiteitFractie: {'Beginstadium':0.15,'Duidelijk waarneembaar':0.40,'Gevorderd':0.70,'Eindstadium':0.95},
+      ontwikkelingSnelheid: {'Stabiel':0.6,'Langzaam':1,'Progressief':1.6,'Snel / actief':2.5},
+      ernstFactor: {'Ernstig':0.6,'Serieus':1,'Gering':1.5},
+      omvangFactor: [{min:0.5,factor:0.8},{min:0.2,factor:0.9}],
+      conditieFractie: {1:0.05,2:0.20,3:0.40,4:0.60,5:0.80,6:0.95},
+      gebruikConditie: true, herstelNiveau: {vervangen:1, herstellen:2, reinigen:-1}
+    },
     tPerCode: {'B05EC01':{klasse:'< 1 jaar',jaar:0.5,tekst:'Korte termijn technisch beoordelen.'},'B15SM07':{klasse:'3–5 jaar',jaar:4,tekst:'Termijn is startvoorstel; specialist bevestigt.'},'B05VZ02':{klasse:'Reeds aanwezig',jaar:0,tekst:'Esthetische faalwijze is reeds aanwezig.'}}
   };
 }
@@ -62,7 +73,7 @@ function defaultSettings(seed) {
 let seed=null, lib=[], libByCode={}, state=null, cfg=null, calc=null;
 
 function emptyState() {
-  return { versie:2, project: { klant:'', object:'', adres:'', status:'nieuw', omschrijving:'' }, settings: defaultSettings(seed), inspectie: clone(seed.inspectie), raw: null, specialist: clone(seed.specialist).map(s=>({...s, prov: Object.fromEntries(SP_FIELDS.filter(k=>s[k]!=null&&s[k]!=='').map(k=>[k,{bron:'excel',ts:'2026-09-16'}]))})), besluiten: clone(seed.besluiten), maatregelen: [], ai: {}, audit: [] };
+  return { versie:2, project: { klant:'', object:'', adres:'', status:'nieuw', omschrijving:'' }, settings: defaultSettings(seed), inspectie: clone(seed.inspectie), raw: null, specialist: clone(seed.specialist).map(s=>({...s, prov: Object.fromEntries(SP_FIELDS.filter(k=>s[k]!=null&&s[k]!=='').map(k=>[k,{bron:'excel',ts:'2026-09-16'}]))})), besluiten: clone(seed.besluiten), maatregelen: [], scenarios: [], ai: {}, audit: [] };
 }
 function migrateV1(old) {
   const st = emptyState();
@@ -110,6 +121,59 @@ function oKlasse(o) { const kl = state.settings.scorekaarten.O.find(x => x.score
 function dKlasse(d) { const kl = state.settings.scorekaarten.D.find(x => x.score === d); return kl ? (kl.detect || '') : ''; }
 function voorstelD(insp) { const R = state.settings.rules.dVoorstel; return insp ? (R[insp] ?? R['Niet']) : null; }
 function voorstelDtekst(insp) { const d = voorstelD(insp); const kl = d ? state.settings.scorekaarten.D.find(x=>x.score===d) : null; return `inspecteerbaarheid '${insp||'onbekend'}' → D ${d??'?'}${kl?` – ${kl.detect}: ${kl.criterium}`:''}`; }
+// ---------- T-bepaling: restlevensduur per bouwdeelcategorie ----------
+/** vormfactor van de degradatiecurve: hoeveel van de levensduur rest bij degradatiegraad d */
+function curveFactor(vorm, d) {
+  const r = Math.max(0, 1 - d);
+  return vorm === 'progressief' ? r * r : vorm === 'degressief' ? Math.sqrt(r) : r;   // progressief = versnelt, degressief = vertraagt
+}
+/** klasse die bij een aantal jaren hoort (eerste klasse waarvan de jaargrens niet lager is) */
+function tKlasseVanJaar(j) {
+  if (j == null) return 'Onbekend';
+  const K = state.settings.rules.tKlassen.slice().sort((a,b)=>a.jaar-b.jaar);
+  return (K.find(k => j <= k.jaar) || K[K.length-1])?.klasse || 'Onbekend';
+}
+/** Bepaalt het faalmoment T in jaren uit de restlevensduur van de bouwdeelcategorie.
+ *  T = levensduur x curvefactor(degradatiegraad) / ontwikkelsnelheid x ernstfactor x omvangfactor.
+ *  Degradatiegraad komt uit de NEN-intensiteit, met de conditiescore als kruiscontrole (verst gevorderde wint).
+ *  Een expliciete regel per gebrekcode (tPerCode) gaat altijd voor. */
+function bepaalT(insp, libE, omvang) {
+  const R = state.settings.rules, T = R.tRegels || {}, horizon = num(state.settings.params.horizon) ?? 40;
+  const code = insp.nenCode, vast = code ? R.tPerCode[code] : null;
+  if (vast) return { jaar: vast.jaar, klasse: vast.klasse, bron: 'code', uitleg: vast.tekst || `Vaste regel voor gebrekcode ${code}.`, delen: [] };
+  if (!T.actief) return { jaar: null, klasse: 'Onbekend', bron: 'onbekend', uitleg: 'T-model staat uit; de specialist bepaalt T.', delen: [] };
+  const bouwdeel = libE?.bouwdeel || insp.bouwdeel || '';
+  const L = num(T.levensduur?.[bouwdeel]) ?? num(T.levensduurDefault);
+  const fI = insp.intensiteit ? num(T.intensiteitFractie?.[insp.intensiteit]) : null;
+  const c = num(insp.conditie);
+  const fC = (T.gebruikConditie && c != null) ? num(T.conditieFractie?.[c]) : null;
+  if (L == null || (fI == null && fC == null)) return { jaar: null, klasse: 'Onbekend', bron: 'onbekend',
+    uitleg: `Onvoldoende basis voor T: ${L == null ? 'geen levensduur voor bouwdeel “' + (bouwdeel||'onbekend') + '”' : 'geen intensiteit en geen conditiescore'}. De specialist bepaalt T.`, delen: [] };
+  const d = Math.max(fI ?? 0, fC ?? 0);
+  const vorm = T.curve?.[bouwdeel] || T.curveDefault || 'lineair';
+  const f = curveFactor(vorm, d);
+  const s = (insp.ontwikkelingKlasse ? num(T.ontwikkelingSnelheid?.[insp.ontwikkelingKlasse]) : null) ?? 1;
+  const e = (insp.ernst ? num(T.ernstFactor?.[insp.ernst]) : null) ?? 1;
+  const ov = num(omvang); const ob = ov == null ? null : (T.omvangFactor||[]).slice().sort((a,b)=>b.min-a.min).find(x => ov >= x.min);
+  const of_ = ob ? ob.factor : 1;
+  const ruw = Math.max(0, L * f / (s || 1) * e * of_);
+  // een gunstige ontwikkeling of geringe ernst mag T nooit boven de resterende technische levensduur tillen
+  const plafondRest = L * Math.max(0, 1 - d);
+  const jaar = Math.round(Math.min(ruw, plafondRest) * 10) / 10;
+  const begrensd = Math.min(jaar, horizon);
+  const delen = [
+    `levensduur ${bouwdeel || 'onbekend'} ${L} jr`,
+    `degradatie ${Math.round(d*100)}% (${fI != null && (fI >= (fC ?? 0)) ? `intensiteit '${insp.intensiteit}'` : `conditie ${c}`})`,
+    `curve ${vorm} → restfactor ${Math.round(f*100)/100}`,
+    `ontwikkeling ${insp.ontwikkelingKlasse || 'onbekend'} ÷ ${s}`,
+    `ernst ${insp.ernst || 'onbekend'} × ${e}`,
+    ...(of_ !== 1 ? [`omvang ${pct(ov)} × ${of_}`] : []),
+    ...(ruw > plafondRest + 0.05 ? [`begrensd op de resterende technische levensduur ${Math.round(plafondRest*10)/10} jr`] : [])
+  ];
+  return { jaar: begrensd, klasse: tKlasseVanJaar(begrensd), bron: 'model', L, d, vorm,
+    uitleg: delen.join(' · ') + ` = ${begrensd} jaar${begrensd !== jaar ? ` (afgekapt op de horizon van ${horizon} jaar)` : ''}`, delen };
+}
+/** oude signatuur bleef in gebruik voor losse gebrekcodes zonder inspectiegegevens */
 function voorstelT(code) { const t = state.settings.rules.tPerCode[code]; return t ? [t.klasse, t.jaar, t.tekst] : ['Onbekend', null, 'T niet betrouwbaar uit alleen gebrekcode; specialist bepaalt.']; }
 function tJaarVanKlasse(k) { return state.settings.rules.tKlassen.find(t=>t.klasse===k)?.jaar ?? null; }
 function prioFromThresholds(list, v, dflt) { if (v==null) return null; const hit = list.slice().sort((a,b)=>b.min-a.min).find(x => v >= x.min); return hit ? hit.prio : dflt; }
@@ -155,6 +219,22 @@ function bedrag(k, jaar, weergave) {
 }
 const weergaveDefault = () => state.settings.params.btwWeergave === 'incl' ? 'btw' : 'index';
 
+/** som van de geindexeerde uitgaven in een jaar */
+const somJaar = (posten, j) => posten.reduce((s, p) => s + (p.jaar === j ? p.kosten * indexFactor(j) : 0), 0);
+/** schuift posten een jaar op tot elk jaar binnen zijn plafond past; laagste risico eerst.
+ *  Cyclische posten blijven staan: die verschuiven zou de hele cyclus verplaatsen. */
+function schuifBinnenPlafond(posten, plafondVan, maxSchuif, jaren) {
+  const laatste = jaren[jaren.length - 1];
+  for (const j of jaren) {
+    const cap = plafondVan(j); if (cap == null) continue; let guard = 0;
+    while (somJaar(posten, j) > cap && guard++ < 2000) {
+      const kand = posten.filter(p => p.jaar === j && !p.cyclisch && p.jaar - p.origineelJaar < maxSchuif && p.jaar < laatste)
+        .sort((a, b) => (b.prioN - a.prioN) || (a.rpn - b.rpn) || (b.kosten - a.kosten));
+      if (!kand.length) break; kand[0].jaar = j + 1;
+    }
+  }
+  return posten;
+}
 /** Budgetsturing: schuift handelingen naar later tot elk jaar binnen het plafond past.
  *  Laagste risico schuift eerst (hoogste prio-nummer, dan laagste RPN-waarde, dan hoogste bedrag).
  *  Cyclische handelingen blijven staan: die verschuiven zou de hele cyclus verplaatsen.
@@ -166,23 +246,15 @@ function budgetPlan(opts = {}) {
   const plafondVan = j => { const o = num(perJaarPlafond[j]); const v = o == null ? algemeen : o; return v == null || v <= 0 ? null : v; };
   const maxSchuif = opts.maxSchuif ?? 10;
   const posten = [];
-  calc.rows.forEach(r => r.maatregelen.forEach(m => m.jaren.forEach(j => posten.push({
+  calc.rows.forEach(r => r.maatregelen.forEach(m => m.jaren.forEach((j, k) => posten.push({
     regel: r.id, element: r.insp.element, handeling: m.handeling || '', maatregelId: m.id, auto: !!m.auto,
-    cyclisch: !!(m.cyclus && m.cyclus > 0), jaar: j, origineelJaar: j, kosten: m.kosten ?? 0,
+    cyclisch: !!(m.cyclus && m.cyclus > 0), eerste: k === 0, jaar: j, origineelJaar: j, kosten: m.kosten ?? 0,
     prio: r.prio, prioN: (PRIOS.indexOf(r.prio) + 1) || 9, rpn: r.RPNwaarde ?? 0, laatsteJaar: r.laatsteJaar, deadline: r.deadline }))));
-  const som = j => posten.reduce((s, p) => s + (p.jaar === j ? p.kosten * indexFactor(j) : 0), 0);
-  for (const j of jaren) {
-    const cap = plafondVan(j); if (cap == null) continue; let guard = 0;
-    while (som(j) > cap && guard++ < 2000) {
-      const kand = posten.filter(p => p.jaar === j && !p.cyclisch && p.jaar - p.origineelJaar < maxSchuif && p.jaar < laatste)
-        .sort((a, b) => (b.prioN - a.prioN) || (a.rpn - b.rpn) || (b.kosten - a.kosten));
-      if (!kand.length) break; kand[0].jaar = j + 1;
-    }
-  }
+  schuifBinnenPlafond(posten, plafondVan, maxSchuif, jaren);
   const shifts = posten.filter(p => p.jaar !== p.origineelJaar).map(p => ({ ...p,
     voorbijLaatsteJaar: p.laatsteJaar != null && p.jaar > p.laatsteJaar,
     voorbijDeadline: p.deadline != null && p.jaar > p.deadline }));
-  const perJaar = jaren.map(j => som(j));
+  const perJaar = jaren.map(j => somJaar(posten, j));
   const nietOplosbaar = jaren.map((j, i) => { const c = plafondVan(j); return c != null && perJaar[i] > c + 0.5 ? { jaar: j, bedrag: perJaar[i], plafond: c } : null; }).filter(Boolean);
   const risico = { geschoven: shifts.length, bedrag: shifts.reduce((s, p) => s + p.kosten, 0),
     voorbijLaatsteJaar: shifts.filter(s => s.voorbijLaatsteJaar).length, voorbijDeadline: shifts.filter(s => s.voorbijDeadline).length,
@@ -222,7 +294,7 @@ function recompute() {
     const eersteVoorstel = (begrHoev != null && kg != null) ? begrHoev*kg : null;
     const libE = libEntry(insp.nenCode);
     const oInfo = systeemvoorstelO(insp, omvang, true), oSys = oInfo.o, dSys = voorstelD(insp.inspecteerbaarheid);
-    const [tKlSys, tJaarSys, tTxtSys] = voorstelT(insp.nenCode);
+    const tInfo = bepaalT(insp, libE, omvang), tKlSys = tInfo.klasse, tJaarSys = tInfo.jaar, tTxtSys = tInfo.uitleg;
     const O = num(sp.O) ?? oSys, D = num(sp.D) ?? dSys;
     const Tklasse = sp.Tklasse || tKlSys;
     const Tjaar = num(sp.Tjaar) ?? (sp.Tklasse ? tJaarVanKlasse(sp.Tklasse) : tJaarSys);
@@ -248,7 +320,7 @@ function recompute() {
     const bronnen = Object.values(sp.prov||{}).map(p=>p.bron);
     const aiStatus = bronnen.includes('mens') ? 'Mens gecontroleerd' : bronnen.includes('ai') ? 'AI ingevuld' : bronnen.includes('excel') ? 'Uit Excel' : 'Systeemvoorstel';
     const r = { id: insp.id, insp, sp, bes, libE, omvang, kostenElement, kostenLokaal, omslagEff, begrotingswijze, begrHoev, eersteVoorstel,
-      oSys, oInfo, dSys, tKlSys, tJaarSys, tTxtSys, O, D, Tklasse, Tjaar, effect, faalwijze, kostenSpec, definitieveKosten,
+      oSys, oInfo, dSys, tKlSys, tJaarSys, tTxtSys, tInfo, O, D, Tklasse, Tjaar, effect, faalwijze, kostenSpec, definitieveKosten,
       kostenbron: kostenSpec != null ? 'Technisch specialist' : 'Inspectie/softwarevoorstel',
       Stech, RPNtech, impact, Swaarde, RPNwaarde, basis, safety, compliance, tPrio, nenSignaal, prio, laatsteJaar, deadline, domTech, domWaarde,
       status: compleet ? 'Compleet' : 'Aanvullen', aiStatus,
@@ -273,6 +345,113 @@ function recompute() {
     totaal: som(perJaar), totaalIndex: som(perJaarIndex), totaalBtw: som(perJaarBtw), totaalNpv: som(perJaarNpv),
     totaalVan: w => som(series[w] || perJaarIndex), start, prijspeil: num(P.prijspeil) ?? start };
   return calc;
+}
+
+// ---------- conditieprognose (NEN 2767 over de horizon) ----------
+/** herstelniveau uit de tekst van een handeling: vervangen → conditie 1, herstellen → 2, reinigen/conserveren → een stap beter */
+function herstelEffect(handeling, huidig) {
+  const hn = state.settings.rules.tRegels?.herstelNiveau || { vervangen: 1, herstellen: 2, reinigen: -1 };
+  const t = String(handeling || '').toLowerCase();
+  if (/vervang|renov|nieuw aanbrengen|volledig/.test(t)) return { c: hn.vervangen ?? 1, soort: 'vervangen' };
+  if (/herstel|repar|dicht|vastzet|aanhel/.test(t)) return { c: hn.herstellen ?? 2, soort: 'herstellen' };
+  if (/reinig|conserv|schilder|onderhoud|smeer|inspect/.test(t)) return { c: Math.max(1, huidig + (hn.reinigen ?? -1)), soort: 'reinigen/conserveren' };
+  return { c: Math.max(1, huidig + (hn.reinigen ?? -1)), soort: 'onbekende handeling' };
+}
+/** restjaren tot conditie 6 vanuit een conditiescore, via de degradatiecurve van het bouwdeel */
+function restjarenVan(c, L, vorm) {
+  const F = state.settings.rules.tRegels?.conditieFractie || {};
+  const d = num(F[Math.max(1, Math.min(6, Math.round(c)))]) ?? Math.max(0, (c - 1) / 5);
+  return Math.max(0, (L ?? 30) * curveFactor(vorm || 'lineair', d));
+}
+/** Conditieprognose per jaar, met en zonder de geplande handelingen.
+ *  Per regel: conditie loopt lineair naar 6 op het faalmoment T; een handeling zet de conditie terug
+ *  en daarna begint de degradatie opnieuw vanuit die conditie (over de levensduur van het bouwdeel).
+ *  opts.posten: eigen lijst {regel, jaar, handeling} (voor scenario's); standaard de geplande handelingen. */
+function conditiePrognose(opts = {}) {
+  const jaren = calc.jaren, start = calc.start, Rg = state.settings.rules.tRegels || {};
+  const posten = opts.posten || calc.rows.flatMap(r => r.maatregelen.flatMap(m => m.jaren.map(j => ({ regel: r.id, jaar: j, handeling: m.handeling }))));
+  const perRegel = {}; posten.forEach(p => { (perRegel[p.regel] = perRegel[p.regel] || []).push(p); });
+  const stap = (c, rest) => rest <= 0 ? 6 : Math.min(6, c + (6 - c) / rest);
+  const rijen = calc.rows.map(r => {
+    const L = r.tInfo?.L ?? num(Rg.levensduurDefault) ?? 30, vorm = r.tInfo?.vorm || Rg.curveDefault || 'lineair';
+    const nu = num(r.insp.conditie) ?? Math.max(1, Math.min(6, Math.round(1 + 5 * (r.tInfo?.d ?? 0.2))));
+    const T = r.Tjaar != null ? r.Tjaar : restjarenVan(nu, L, vorm);
+    const eigen = (perRegel[r.id] || []).slice().sort((a, b) => a.jaar - b.jaar);
+    const zonder = [], met = [];
+    let cZ = nu, rZ = T, cM = nu, rM = T;
+    for (const j of jaren) {
+      const ing = eigen.find(p => p.jaar === j);
+      if (ing) { const h = herstelEffect(ing.handeling, cM); cM = h.c; rM = restjarenVan(cM, L, vorm); }
+      zonder.push(Math.round(cZ * 10) / 10); met.push(Math.round(cM * 10) / 10);
+      cZ = stap(cZ, rZ); rZ = Math.max(0, rZ - 1); cM = stap(cM, rM); rM = Math.max(0, rM - 1);
+    }
+    return { id: r.id, element: r.insp.element, prio: r.prio, nu, T, L, vorm, gewicht: num(r.insp.hoevTotaal) || 1, zonder, met };
+  });
+  const gewichtTotaal = rijen.reduce((a, x) => a + x.gewicht, 0) || 1;
+  const gem = k => jaren.map((_, i) => rijen.reduce((a, x) => a + x[k][i] * x.gewicht, 0) / gewichtTotaal);
+  const aantalVanaf = (k, grens) => jaren.map((_, i) => rijen.filter(x => x[k][i] >= grens).length);
+  return { jaren, rijen, gemMet: gem('met'), gemZonder: gem('zonder'),
+    slechtMet: aantalVanaf('met', 5), slechtZonder: aantalVanaf('zonder', 5),
+    kritiekMet: aantalVanaf('met', 5.5), gewogen: rijen.some(x => x.gewicht !== 1) };
+}
+
+// ---------- onderhoudsscenario's ----------
+const SCENARIO_STRATEGIE = [['gepland','Zoals nu gepland'],['laatste','Alles naar het laatste acceptabele jaar'],['deadline','Alles naar de technische deadline (T)']];
+/** Rekent een scenario door zonder de projectdata te wijzigen: welke prioriteiten uitvoeren,
+ *  wanneer, en binnen welk jaarplafond. Geeft kosten, risicogevolg en conditiebeeld terug. */
+function evalueerScenario(def = {}) {
+  const jaren = calc.jaren, P = state.settings.params;
+  const prios = (def.prios && def.prios.length) ? def.prios : null;
+  const plafond = num(def.plafond), maxSchuif = def.maxSchuif ?? 10;
+  const posten = [], niet = [];
+  calc.rows.forEach(r => {
+    const doen = !prios || (r.prio && prios.includes(r.prio));
+    r.maatregelen.forEach(m => {
+      if (!doen) { niet.push({ regel: r.id, element: r.insp.element, prio: r.prio, kosten: (m.kosten ?? 0) * Math.max(1, m.jaren.length), rpn: r.RPNwaarde ?? 0 }); return; }
+      const basis = def.strategie === 'laatste' ? (r.laatsteJaar ?? m.jaar) : def.strategie === 'deadline' ? (r.deadline ?? m.jaar) : m.jaar;
+      const vm = { ...m, jaar: basis };
+      const jrn = (m.cyclus && m.cyclus > 0) ? expandCyclus(vm, jaren) : (basis == null || !jaren.includes(basis) ? [] : [basis]);
+      jrn.forEach((j, k) => posten.push({ regel: r.id, element: r.insp.element, handeling: m.handeling || '', maatregelId: m.id,
+        cyclisch: !!(m.cyclus && m.cyclus > 0), eerste: k === 0, jaar: j, origineelJaar: j, kosten: m.kosten ?? 0, prio: r.prio,
+        prioN: (PRIOS.indexOf(r.prio) + 1) || 9, rpn: r.RPNwaarde ?? 0, laatsteJaar: r.laatsteJaar, deadline: r.deadline }));
+    });
+  });
+  const plafondVan = () => (plafond == null || plafond <= 0) ? null : plafond;
+  if (plafond) schuifBinnenPlafond(posten, plafondVan, maxSchuif, jaren);
+  const perJaar = jaren.map(j => posten.reduce((s, p) => s + (p.jaar === j ? p.kosten : 0), 0));
+  const perJaarIndex = jaren.map((j, i) => perJaar[i] * (calc.idx[j] ?? 1));
+  const perJaarNpv = jaren.map((j, i) => perJaarIndex[i] * (calc.inclBtw ? calc.btwF : 1) * (calc.npv[j] ?? 1));
+  const som = a => a.reduce((x, y) => x + y, 0);
+  const piekI = perJaarIndex.indexOf(Math.max(...perJaarIndex));
+  // alleen de eerste uitvoering telt voor "te laat": een cyclusherhaling in 2060 is geen uitstel maar planmatig onderhoud
+  const teLaat = posten.filter(p => p.eerste && p.laatsteJaar != null && p.jaar > p.laatsteJaar);
+  const naDeadline = posten.filter(p => p.eerste && p.deadline != null && p.jaar > p.deadline);
+  const pg = conditiePrognose({ posten });
+  const bij = n => pg.gemMet[Math.min(n - 1, pg.gemMet.length - 1)];
+  return { def, jaren, posten, perJaar, perJaarIndex, perJaarNpv,
+    totaal: som(perJaar), totaalIndex: som(perJaarIndex), totaalNpv: som(perJaarNpv),
+    piek: { jaar: jaren[piekI], bedrag: perJaarIndex[piekI] },
+    bovenPlafond: plafond ? perJaarIndex.filter(v => v > plafond + 0.5).length : 0,
+    teLaat: teLaat.length, naDeadline: naDeadline.length, geschoven: posten.filter(p => p.jaar !== p.origineelJaar).length,
+    nietUitgevoerd: { n: niet.length, kosten: som(niet.map(x => x.kosten)), rpn: som(niet.map(x => x.rpn)) },
+    conditie: { jaar5: bij(5), jaar10: bij(10), jaar15: bij(15), eind: pg.gemMet[pg.gemMet.length - 1],
+      slecht15: pg.slechtMet[Math.min(14, pg.slechtMet.length - 1)], slechtEind: pg.slechtMet[pg.slechtMet.length - 1] },
+    prognose: pg };
+}
+/** de jaren van een scenario vastleggen in de handelingen (zelfde route als de budgetsturing) */
+function pasScenarioToe(res) {
+  let n = 0;
+  for (const p of res.posten) {
+    if (p.jaar === p.origineelJaar && res.def.strategie === 'gepland' && !res.def.plafond) continue;
+    const r = calc.rows.find(x => x.id === p.regel); if (!r) continue;
+    let m = state.maatregelen.find(x => x.id === p.maatregelId);
+    if (!m) { const a = r.maatregelen.find(x => x.id === p.maatregelId) || r.maatregelen[0]; m = { id: uid(), regelId: r.id, handeling: a.handeling, jaar: a.jaar, kosten: a.kosten, cyclus: a.cyclus ?? null, tot: a.tot ?? null }; state.maatregelen.push(m); }
+    if (m.jaar === p.jaar) continue;
+    const oud = m.jaar; m.jaar = p.jaar; m.bron = 'scenario';
+    audit({ regel: r.id, veld: 'mjop.jaar', oud, nieuw: p.jaar, bron: 'systeem', opmerking: `scenario “${res.def.naam || ''}”: van ${oud} naar ${p.jaar}` });
+    n++;
+  }
+  if (n) save(); return n;
 }
 
 // ---------- OpenRouter ----------
@@ -345,6 +524,8 @@ function removeAspect(i) {
 function migrateSettings(S) {
   if (!S.aspecten) S.aspecten = clone(seed.aspecten);
   Object.entries(FIN_DEFAULT).forEach(([k,v]) => { if (S.params[k] === undefined) S.params[k] = clone(v); });
+  if (!S.rules?.tRegels) { if (S.rules) S.rules.tRegels = defaultRules().tRegels; }
+  else { const d = defaultRules().tRegels; Object.keys(d).forEach(k => { if (S.rules.tRegels[k] === undefined) S.rules.tRegels[k] = d[k]; }); if (!Object.keys(S.rules.tRegels.levensduur||{}).length) S.rules.tRegels.levensduur = d.levensduur; }
   if (S.params.prijspeil == null) S.params.prijspeil = S.params.startjaar;
   if (!S.rules.oVoorstel.ontwikkeling) { S.rules.oVoorstel = defaultRules().oVoorstel; S.rules.dVoorstel = defaultRules().dVoorstel; }
   if (!S.rules.safetyAspect) { S.rules.safetyAspect = 'Veiligheid'; S.rules.complianceAspect = 'Compliance'; }
@@ -356,7 +537,7 @@ function setState(st) {
   state = st && st.inspectie ? st : emptyState(); state.project = state.project || { klant:'', object:'', adres:'', status:'actief', omschrijving:'' };
   if (!state.settings) state.settings = defaultSettings(seed); if (!state.settings.rules) state.settings.rules = defaultRules();
   migrateSettings(state.settings); syncAspects();
-  state.maatregelen = state.maatregelen || []; state.audit = state.audit || []; state.ai = state.ai || {}; state.besluiten = state.besluiten || []; state.specialist = state.specialist || [];
+  state.maatregelen = state.maatregelen || []; state.scenarios = state.scenarios || []; state.audit = state.audit || []; state.ai = state.ai || {}; state.besluiten = state.besluiten || []; state.specialist = state.specialist || [];
 }
 /** Globale foutafhandeling: onverwachte fouten en afgewezen promises worden vastgelegd. */
 function startFoutafhandeling() {
@@ -371,5 +552,6 @@ return { ASP, ASP_SHORT, ONTWIKKELING, INTENSITEIT, ERNST, INSPECTEERBAAR, PRIOS
   $, $$, esc, num, eur, pct, pct1, pill, uid, toast, clone, defaultRules, defaultSettings,
   get seed(){return seed}, get lib(){return lib}, get libByCode(){return libByCode}, get state(){return state}, set state(v){state=v}, get cfg(){return cfg}, get calc(){return calc},
   save, saveCfg, audit, getSp, setSp, belangen, libEntry, systeemvoorstelO, voorstelD, voorstelDtekst, voorstelT, tJaarVanKlasse, OKANS, DTEKST,
-  maatregelenVan, expandCyclus, recompute, WEERGAVEN, FIN_DEFAULT, inflatieVan, indexFactor, btwFactor, npvFactor, bedrag, weergaveDefault, budgetPlan, pasBudgetToe, startFoutafhandeling, callAgent, modelFor, parseJSON, loadData, resetState, emptyState, setState, applySharedCfg, migrateV1 };
+  maatregelenVan, expandCyclus, recompute, WEERGAVEN, FIN_DEFAULT, inflatieVan, indexFactor, btwFactor, npvFactor, bedrag, weergaveDefault, budgetPlan, pasBudgetToe,
+  bepaalT, tKlasseVanJaar, curveFactor, restjarenVan, herstelEffect, conditiePrognose, evalueerScenario, pasScenarioToe, SCENARIO_STRATEGIE, startFoutafhandeling, callAgent, modelFor, parseJSON, loadData, resetState, emptyState, setState, applySharedCfg, migrateV1 };
 })();
