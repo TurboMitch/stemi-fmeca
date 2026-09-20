@@ -52,12 +52,20 @@ const ok = (naam, cond, extra='') => { if (!cond) mislukt++; console.log(`${cond
     const a = test({ O: 99, D: 5, kostenSpecialist: basis * 50, Tjaar: 2, effect: [1,2,3,4,5,6,7,8] });
     const b = test({ O: 7, kostenSpecialist: basis * 1.5 });
     const c = test({ kostenSpecialist: 5000, Tjaar: 999, Tklasse: 'ooit', effect: [1,2,3] });
-    const zonderBasis = (() => { const r2 = { ...r, eersteVoorstel: null }; const p = { kostenSpecialist: 250000 }; const f = window.__keur(p, r2); return { p, f }; })();
+    const zonderBasis = (() => { const r2 = { ...r, eersteVoorstel: null, kostenLokaal: null, kostenElement: null }; const p = { kostenSpecialist: 250000 }; const f = window.__keur(p, r2); return { p, f }; })();
     return { a, b, c, zonderBasis, basis };
   });
   ok('O buiten 1-10 wordt geweigerd', guard.a.over.O === undefined && guard.a.flags.some(f=>f.veld==='O'));
   ok('absurd bedrag (50x) wordt geweigerd', guard.a.over.kostenSpecialist === undefined && guard.a.flags.some(f=>f.veld==='kostenSpecialist'));
   ok('geldig bedrag (1,5x) wordt wel overgenomen', guard.b.over.kostenSpecialist != null && guard.b.flags.length === 0);
+  const band = await pg.evaluate(() => {
+    const r = window.STEMI.calc.rows.find(x => x.kostenElement > x.kostenLokaal * 2) || window.STEMI.calc.rows[0];
+    const integraal = { kostenSpecialist: r.kostenElement }; const f1 = window.__keur(integraal, r);
+    const veelTeHoog = { kostenSpecialist: r.kostenElement * 10 }; const f2 = window.__keur(veelTeHoog, r);
+    return { lokaal: Math.round(r.kostenLokaal||0), integraal: Math.round(r.kostenElement||0), integraalOk: integraal.kostenSpecialist != null, f1: f1.length, teHoogGeweigerd: veelTeHoog.kostenSpecialist === undefined, f2: f2.length };
+  });
+  ok('integraal bedrag mag, ook als de rekenkern lokaal begroot', band.integraalOk && band.f1 === 0, `lokaal ${band.lokaal} / integraal ${band.integraal}`);
+  ok('10x het integrale bedrag wordt nog steeds geweigerd', band.teHoogGeweigerd && band.f2 === 1);
   ok('onmogelijke T-waarden geweigerd', guard.c.over.Tjaar === undefined && guard.c.over.Tklasse === undefined);
   ok('effect met verkeerd aantal waarden geweigerd', guard.c.over.effect === undefined);
   ok('bedrag zonder kostenbasis nooit overgenomen', guard.zonderBasis.p.kostenSpecialist === undefined && /geen kostenbasis/.test(guard.zonderBasis.f[0].reden));

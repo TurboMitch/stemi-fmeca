@@ -89,14 +89,36 @@ function keurAI(p, r) {
   if (p.Tklasse && !tklassen().includes(p.Tklasse)) { flags.push({ veld:'Tklasse', waarde: p.Tklasse, reden:'geen bestaande T-klasse' }); delete p.Tklasse; }
   // kosten: alleen met een controleerbare basis (hoeveelheid x kengetal) en binnen een bandbreedte
   if (p.kostenSpecialist != null && p.kostenSpecialist !== '') {
-    const k = num(p.kostenSpecialist); const basis = num(r.eersteVoorstel);
+    const k = num(p.kostenSpecialist);
+    // De bandbreedte geldt tegen zowel lokaal (alleen het gebrek) als integraal (hele element) uitvoeren:
+    // de AI mag integraal voorstellen terwijl de rekenkern lokaal begroot, en omgekeerd.
+    const lok = num(r.kostenLokaal) || 0, elem = num(r.kostenElement) || 0, voorstel = num(r.eersteVoorstel) || 0;
+    const onder = Math.min(...[lok, elem, voorstel].filter(x => x > 0), Infinity) * KOSTEN_ONDER;
+    const boven = Math.max(lok, elem, voorstel) * KOSTEN_BOVEN;
     if (k == null || k < 0) { flags.push({ veld:'kostenSpecialist', waarde: p.kostenSpecialist, reden:'geen geldig bedrag' }); delete p.kostenSpecialist; }
-    else if (!basis) { flags.push({ veld:'kostenSpecialist', waarde: eur(k), reden:'geen kostenbasis: hoeveelheid en/of kengetal ontbreekt in tab 02 — bedrag niet overgenomen' }); delete p.kostenSpecialist; }
-    else if (k < basis * KOSTEN_ONDER || k > basis * KOSTEN_BOVEN) { flags.push({ veld:'kostenSpecialist', waarde: eur(k), reden:`wijkt ${(k / basis).toFixed(1)}x af van het systeemvoorstel ${eur(basis)} (toegestaan ${KOSTEN_ONDER}x–${KOSTEN_BOVEN}x) — ter beoordeling` }); delete p.kostenSpecialist; }
+    else if (!(boven > 0)) { flags.push({ veld:'kostenSpecialist', waarde: eur(k), reden:'geen kostenbasis: hoeveelheid en/of kengetal ontbreekt in tab 02 — bedrag niet overgenomen' }); delete p.kostenSpecialist; }
+    else if (k < onder || k > boven) { flags.push({ veld:'kostenSpecialist', waarde: eur(k), reden:`buiten de bandbreedte ${eur(onder)}–${eur(boven)} (lokaal ${eur(lok)}, integraal ${eur(elem)}) — ter beoordeling` }); delete p.kostenSpecialist; }
   }
   return flags;
 }
 function flagsVan(id) { return C.state.ai[id]?._flags || []; }
+/** Herkeurt eerder opgehaalde AI-output met de huidige controleregels (haalt de ruwe output uit ai_runs).
+    Kost geen AI-credits en is bedoeld na een aanpassing van de regels of van de inspectiedata. */
+async function herkeurAlles(opts = {}) {
+  const rows = C.calc.rows; let bijgewerkt = 0, nietGevonden = 0, nieuweFlags = 0;
+  for (const r of rows) {
+    let runs; try { runs = await window.STEMI_DB.aiRunsVan(r.id); } catch { runs = []; }
+    const ruw = runs.map(x => x.output).find(o => o && !o.error);
+    if (!ruw) { nietGevonden++; continue; }
+    const p = JSON.parse(JSON.stringify(ruw)); const flags = keurAI(p, r);
+    C.state.ai[r.id] = { ...p, _model: runs[0].model, _ts: runs[0].ts, _usage: runs[0].usage, _flags: flags };
+    bijgewerkt++; nieuweFlags += flags.length;
+    applyAI(r.id, AI_FIELDS.map(f => f[0]), !!opts.overschrijf); C.recompute();
+  }
+  C.save(); window.STEMI_UI.renderAll('specialist');
+  C.toast(`${bijgewerkt} regel(s) herkeurd, ${nieuweFlags} signaal/signalen over${nietGevonden?`, ${nietGevonden} zonder bewaarde AI-run`:''}`, 8000);
+  return { bijgewerkt, nieuweFlags, nietGevonden };
+}
 function flagsTotaal() { return C.calc.rows.reduce((a, r) => a + flagsVan(r.id).length, 0); }
 /** past AI-voorstel toe; menselijke velden blijven staan tenzij overschrijf=true */
 function applyAI(id, keys, overschrijf=false) {
@@ -276,5 +298,5 @@ function openChat() {
   $('#chatClear').onclick = () => { chatHistory=[]; openChat(); };
 }
 if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__keur = keurAI; /* alleen lokaal: hook voor de testsuite */
-window.STEMI_UI = window.STEMI_UI || {}; Object.assign(window.STEMI_UI, { renderSpecialist: render, aiFillAll, analyzeRow, applyAI, AI_FIELDS });
+window.STEMI_UI = window.STEMI_UI || {}; Object.assign(window.STEMI_UI, { renderSpecialist: render, herkeurAlles, aiFillAll, analyzeRow, applyAI, AI_FIELDS });
 })();
