@@ -19,6 +19,8 @@ async function ensureDossier() {
   if (!d) { const st = C.emptyState(); st.project = { klant:'Voorbeeld', object:'Loods', adres:'', status:'nieuw', omschrijving:'Voorbeelddata uit het Excel-model V2' }; d = await DB.createDossier('Loods – voorbeeld', st); }
   else d = await DB.openDossier(d.id);
   C.setState(d.state);
+  // AI-voorstellen staan in een eigen tabel; wat nog in een oude state zit blijft als terugval bestaan
+  try { const ai = await DB.aiVan(d.id); C.state.ai = { ...(C.state.ai || {}), ...ai }; } catch (e) { console.warn('ai laden', e); }
 }
 async function start() {
   const shared = await DB.getShared(); C.applySharedCfg(shared);

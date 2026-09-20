@@ -64,7 +64,7 @@
 (async () => {
   const files = ['core','db','prep','ui-wizard','ui-inspectie','ui-specialist','ui-mjop','ui-scenario','ui-rapport','ui-rest','ui-projecten','main'];
   const load = src => new Promise((ok, fail) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => fail(new Error(src)); document.body.appendChild(s); });
-  for (const f of files) { let done = false; for (let i = 0; i < 4 && !done; i++) { try { await load(`/js/${f}.js?v=5${i ? '&r=' + i : ''}`); done = true; } catch (e) { await new Promise(r => setTimeout(r, 400 * (i + 1))); } }
+  for (const f of files) { let done = false; for (let i = 0; i < 4 && !done; i++) { try { await load(`/js/${f}.js?v=6${i ? '&r=' + i : ''}`); done = true; } catch (e) { await new Promise(r => setTimeout(r, 400 * (i + 1))); } }
     if (!done) { document.body.innerHTML = '<p style="padding:20px">Laden mislukt (' + f + '). Herlaad de pagina.</p>'; return; } }
 })();
 </script>

@@ -64,7 +64,7 @@ async function analyzeRow(id, extra='') {
       else throw new Error('Geen geldige JSON van het model (' + (d.finish_reason||'?') + '): ' + String(d.content).slice(0,120));
     }
     const flags = keurAI(p, r);
-    C.state.ai[id] = { ...p, _model: d.model, _ts: new Date().toISOString(), _usage: d.usage, _flags: flags }; C.save();
+    C.setAi(id, { ...p, _model: d.model, _ts: new Date().toISOString(), _usage: d.usage, _flags: flags }); C.save();
     if (window.STEMI_DB) window.STEMI_DB.logAiRun({ regel:id, taak:'specialist', model:d.model, input:{ system: msgs[0].content, context: ctx, extra }, output:p, usage:d.usage });
     setRowStatus(id, 'ok'); return p;
   } catch (e) {
@@ -121,7 +121,7 @@ async function herkeurAlles(opts = {}) {
     const ruw = runs.map(x => x.output).find(o => o && !o.error);
     if (!ruw) { nietGevonden++; continue; }
     const p = JSON.parse(JSON.stringify(ruw)); const flags = keurAI(p, r);
-    C.state.ai[r.id] = { ...p, _model: runs[0].model, _ts: runs[0].ts, _usage: runs[0].usage, _flags: flags };
+    C.setAi(r.id, { ...p, _model: runs[0].model, _ts: runs[0].ts, _usage: runs[0].usage, _flags: flags });
     bijgewerkt++; nieuweFlags += flags.length;
     applyAI(r.id, AI_FIELDS.map(f => f[0]), !!opts.overschrijf); C.recompute();
   }

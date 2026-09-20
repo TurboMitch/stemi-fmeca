@@ -82,9 +82,19 @@ function migrateV1(old) {
   st.inspectie = old.inspectie||[]; st.specialist = (old.specialist||[]).map(s=>({...s, prov: s.prov||{}})); st.besluiten = old.besluiten||[]; st.ai = old.ai||{};
   return st;
 }
-function save() { try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch{} if (window.STEMI_DB) window.STEMI_DB.persist(state); }
+/** kengetallen die de projectenlijst en de portefeuillelaag nodig hebben zonder de hele state te laden */
+function kpiVan() {
+  if (!calc) return null;
+  const perPrio = {}; PRIOS.forEach(p => { const n = calc.rows.filter(r => r.prio === p).length; if (n) perPrio[p] = n; });
+  return { totaal: Math.round(calc.totaal), totaalIndex: Math.round(calc.totaalIndex), totaalNpv: Math.round(calc.totaalNpv),
+    perPrio, compleet: calc.rows.filter(r => r.status === 'Compleet').length, horizon: num(state.settings.params.horizon) ?? null,
+    eersteJaren: calc.perJaarIndex.slice(0, 5).map(v => Math.round(v)) };
+}
+function save() { try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch{} if (window.STEMI_DB) window.STEMI_DB.persist(state, kpiVan()); }
+/** AI-voorstel vastleggen: in het geheugen én in de eigen tabel (niet in de projectstate) */
+function setAi(id, data) { state.ai[id] = data; if (window.STEMI_DB) window.STEMI_DB.zetAi(+id, data); }
 function saveCfg() { try { localStorage.setItem(LS_CFG, JSON.stringify(cfg)); } catch{} if (window.STEMI_DB) window.STEMI_DB.setShared(cfg).catch(e=>console.warn(e)); }
-function audit(entry) { const e = {ts:new Date().toISOString(), user: window.STEMI_DB?.profile?.username, ...entry}; state.audit.unshift(e); if (state.audit.length>300) state.audit.length=300; /* volledige trail staat in audit_log */ if (window.STEMI_DB) window.STEMI_DB.logAudit(e); }
+function audit(entry) { const e = {ts:new Date().toISOString(), user: window.STEMI_DB?.profile?.username, ...entry}; state.audit.unshift(e); if (state.audit.length>100) state.audit.length=100; /* volledige trail staat in audit_log */ if (window.STEMI_DB) window.STEMI_DB.logAudit(e); }
 function getSp(id) { let sp = state.specialist.find(x=>x.id===id); if(!sp){ sp={id,effect:[],prov:{}}; state.specialist.push(sp);} sp.prov = sp.prov||{}; return sp; }
 /** zet een specialistveld met herkomst; logt in audit */
 function setSp(id, k, v, bron, meta={}) {
@@ -519,6 +529,7 @@ function removeAspect(i) {
   S.aspecten.splice(i, 1); Object.values(S.profielen).forEach(p => p.splice(i, 1)); S.params.minimum.splice(i, 1);
   S.scorekaarten.S.forEach(s => s.aspecten.splice(i, 1)); state.specialist.forEach(sp => { if (Array.isArray(sp.effect) && sp.effect.length > i) sp.effect.splice(i, 1); });
   Object.values(state.ai || {}).forEach(a => { if (Array.isArray(a.effect) && a.effect.length > i) a.effect.splice(i, 1); });
+  if (window.STEMI_DB) window.STEMI_DB.zetAlleAi(state.ai);   // de effectarrays in de AI-voorstellen zijn meegekrompen
   syncAspects(); return true;
 }
 function migrateSettings(S) {
@@ -546,12 +557,12 @@ function startFoutafhandeling() {
   window.addEventListener('unhandledrejection', e => { const r = e.reason; log('browser', (r?.message || String(r)).slice(0, 500), { soort: 'unhandledrejection', stack: r?.stack?.slice(0, 1500) }); });
 }
 function applySharedCfg(v) { if (!v) return; const { apiKey, ...rest } = v; cfg = Object.assign(cfg, rest); if (apiKey) cfg.apiKey = apiKey; /* lege gedeelde sleutel mag een lokaal ingevulde sleutel niet wissen */ }
-function resetState() { state = emptyState(); save(); }
+function resetState() { state = emptyState(); if (window.STEMI_DB) window.STEMI_DB.wisAi(null); save(); }
 
 return { ASP, ASP_SHORT, ONTWIKKELING, INTENSITEIT, ERNST, INSPECTEERBAAR, PRIOS, MODELS, SP_NUM, SP_FIELDS, syncAspects, addAspect, removeAspect, oKlasse, dKlasse,
   $, $$, esc, num, eur, pct, pct1, pill, uid, toast, clone, defaultRules, defaultSettings,
   get seed(){return seed}, get lib(){return lib}, get libByCode(){return libByCode}, get state(){return state}, set state(v){state=v}, get cfg(){return cfg}, get calc(){return calc},
-  save, saveCfg, audit, getSp, setSp, belangen, libEntry, systeemvoorstelO, voorstelD, voorstelDtekst, voorstelT, tJaarVanKlasse, OKANS, DTEKST,
+  save, saveCfg, audit, kpiVan, setAi, getSp, setSp, belangen, libEntry, systeemvoorstelO, voorstelD, voorstelDtekst, voorstelT, tJaarVanKlasse, OKANS, DTEKST,
   maatregelenVan, expandCyclus, recompute, WEERGAVEN, FIN_DEFAULT, inflatieVan, indexFactor, btwFactor, npvFactor, bedrag, weergaveDefault, budgetPlan, pasBudgetToe,
   bepaalT, tKlasseVanJaar, curveFactor, restjarenVan, herstelEffect, conditiePrognose, evalueerScenario, pasScenarioToe, SCENARIO_STRATEGIE, startFoutafhandeling, callAgent, modelFor, parseJSON, loadData, resetState, emptyState, setState, applySharedCfg, migrateV1 };
 })();

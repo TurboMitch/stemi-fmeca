@@ -22,23 +22,84 @@ async function token() {
 }
 
 // ---------- dossiers ----------
-async function listDossiers() { const { data, error } = await sb.from('dossiers').select('id,naam,meta,versie,created_at,updated_at,updated_by,created_by').order('updated_at', { ascending: false }); if (error) throw error; const ids = [...new Set(data.flatMap(d=>[d.updated_by,d.created_by]).filter(Boolean))]; let names = {}; if (ids.length) { const { data: pr } = await sb.from('profiles').select('id,username,display_name').in('id', ids); (pr||[]).forEach(p => names[p.id] = p.display_name || p.username); } return data.map(d => ({ ...d, updated_by_naam: names[d.updated_by]||'', created_by_naam: names[d.created_by]||'' })); }
+const KOLOMMEN = 'id,naam,meta,versie,portefeuille,created_at,updated_at,updated_by,created_by,verwijderd_op,verwijderd_door';
+/** projecten waar deze gebruiker lid van is (beheerder ziet alles); verwijderde projecten alleen met opts.prullenbak */
+async function listDossiers(opts = {}) {
+  let q = sb.from('dossiers').select(KOLOMMEN).order('updated_at', { ascending: false });
+  q = opts.prullenbak ? q.not('verwijderd_op', 'is', null) : q.is('verwijderd_op', null);
+  const { data, error } = await q; if (error) throw error;
+  const ids = [...new Set(data.flatMap(d => [d.updated_by, d.created_by, d.verwijderd_door]).filter(Boolean))];
+  let names = {}; if (ids.length) { const { data: pr } = await sb.from('profiles').select('id,username,display_name').in('id', ids); (pr||[]).forEach(p => names[p.id] = p.display_name || p.username); }
+  // eigen rol per project in één query; een beheerder mag overal bij
+  const { data: mijn } = await sb.from('dossier_leden').select('dossier_id,rol').eq('user_id', user.id);
+  const rollen = Object.fromEntries((mijn||[]).map(l => [l.dossier_id, l.rol]));
+  const { data: tel } = await sb.from('dossier_leden').select('dossier_id');
+  const aantal = {}; (tel||[]).forEach(l => aantal[l.dossier_id] = (aantal[l.dossier_id]||0)+1);
+  return data.map(d => ({ ...d, updated_by_naam: names[d.updated_by]||'', created_by_naam: names[d.created_by]||'',
+    verwijderd_door_naam: names[d.verwijderd_door]||'', mijnRol: rollen[d.id] || (isAdmin() ? 'beheerder' : ''), aantalLeden: aantal[d.id] || 0 }));
+}
+const mijnRolIn = d => d?.mijnRol || (isAdmin() ? 'beheerder' : '');
+/** mag de ingelogde gebruiker in dit project schrijven? (de database bewaakt het ook zelf) */
+function magSchrijven(d = dossier) { const r = mijnRolIn(d); return r === 'beheerder' || r === 'eigenaar' || r === 'redacteur'; }
+function magBeheren(d = dossier) { const r = mijnRolIn(d); return r === 'beheerder' || r === 'eigenaar'; }
 /** metadata die de projectenlijst nodig heeft zonder de hele state te laden */
-function metaVan(state) { const pj = state.project || {}; return { klant: pj.klant||'', object: pj.object||'', adres: pj.adres||'', status: pj.status||'', omschrijving: pj.omschrijving||'', regels: (state.inspectie||[]).length, ai: Object.keys(state.ai||{}).length, profiel: state.settings?.naam||'' }; }
-async function openDossier(id) { const { data, error } = await sb.from('dossiers').select('*').eq('id', id).single(); if (error) throw error; dossier = data; localStorage.setItem('stemi_dossier', id); return data; }
-async function createDossier(naam, state) { const { data, error } = await sb.from('dossiers').insert({ naam, state, meta: metaVan(state), created_by: user.id, updated_by: user.id }).select().single(); if (error) throw error; dossier = data; localStorage.setItem('stemi_dossier', data.id); return data; }
+function metaVan(state, kpi) { const pj = state.project || {}; return { klant: pj.klant||'', object: pj.object||'', adres: pj.adres||'', status: pj.status||'', omschrijving: pj.omschrijving||'', regels: (state.inspectie||[]).length, ai: Object.keys(state.ai||{}).length, profiel: state.settings?.naam||'', ...(kpi || {}) }; }
+async function openDossier(id) { const { data, error } = await sb.from('dossiers').select('*').eq('id', id).single(); if (error) throw error; dossier = data; localStorage.setItem('stemi_dossier', id); await rolVanDossier(); return data; }
+async function rolVanDossier() { if (!dossier || !user) return; const { data } = await sb.from('dossier_leden').select('rol').eq('dossier_id', dossier.id).eq('user_id', user.id).maybeSingle(); dossier.mijnRol = data?.rol || (isAdmin() ? 'beheerder' : ''); }
+
+// ---------- AI-voorstellen (staan in een eigen tabel, niet in de projectstate) ----------
+/** alle AI-voorstellen van een project als object regel → voorstel */
+async function aiVan(dossierId) {
+  const { data, error } = await sb.from('dossier_ai').select('regel,data').eq('dossier_id', dossierId);
+  if (error) { console.warn('ai laden', error); return {}; }
+  return Object.fromEntries((data||[]).map(r => [r.regel, r.data]));
+}
+async function zetAi(regel, data) { if (!dossier) return; const { error } = await sb.from('dossier_ai').upsert({ dossier_id: dossier.id, regel, data, bijgewerkt_op: new Date().toISOString() }); if (error) { console.warn('ai opslaan', error); logFout('opslaan', error.message, { soort: 'ai_upsert', details: { regel } }); } }
+async function zetAlleAi(obj) { if (!dossier) return; const rijen = Object.entries(obj||{}).map(([regel, data]) => ({ dossier_id: dossier.id, regel: +regel, data, bijgewerkt_op: new Date().toISOString() })); if (!rijen.length) return; const { error } = await sb.from('dossier_ai').upsert(rijen); if (error) console.warn('ai opslaan', error); }
+async function wisAi(regel) { if (!dossier) return; if (regel == null) await sb.from('dossier_ai').delete().eq('dossier_id', dossier.id); else await sb.from('dossier_ai').delete().eq('dossier_id', dossier.id).eq('regel', regel); }
+async function createDossier(naam, state, extra = {}) { const { data, error } = await sb.from('dossiers').insert({ naam, state: zonderAi(state), meta: metaVan(state), created_by: user.id, updated_by: user.id, ...extra }).select().single(); if (error) throw error; dossier = data; dossier.mijnRol = 'eigenaar'; localStorage.setItem('stemi_dossier', data.id); if (state.ai && Object.keys(state.ai).length) await zetAlleAi(state.ai); return data; }
+/** de AI-voorstellen gaan niet mee in de projectstate: die staan in dossier_ai (scheelt honderden kB per opslagronde) */
+function zonderAi(state) { const { ai, ...rest } = state || {}; return rest; }
 async function renameDossier(naam) { const { error } = await sb.from('dossiers').update({ naam, updated_by: user.id }).eq('id', dossier.id); if (error) throw error; dossier.naam = naam; }
-async function duplicateDossier(id, naam, opts={}) { const { data: src, error } = await sb.from('dossiers').select('state').eq('id', id).single(); if (error) throw error; const st = JSON.parse(JSON.stringify(src.state)); if (opts.alleenInstellingen) { st.inspectie = []; st.specialist = []; st.besluiten = []; st.maatregelen = []; st.ai = {}; st.audit = []; st.raw = null; st.project = { ...(st.project||{}), klant: opts.klant||'', object: opts.object||'', adres: opts.adres||'', status: 'nieuw', omschrijving: opts.omschrijving||'' }; } else { st.project = { ...(st.project||{}), ...(opts.project||{}) }; } return createDossier(naam, st); }
-async function deleteDossier(id) { const { error } = await sb.from('dossiers').delete().eq('id', id); if (error) throw error; if (dossier?.id === id) { dossier = null; localStorage.removeItem('stemi_dossier'); } }
+async function duplicateDossier(id, naam, opts={}) {
+  const { data: src, error } = await sb.from('dossiers').select('state,portefeuille').eq('id', id).single(); if (error) throw error;
+  const st = JSON.parse(JSON.stringify(src.state));
+  if (opts.alleenInstellingen) { st.inspectie = []; st.specialist = []; st.besluiten = []; st.maatregelen = []; st.scenarios = []; st.ai = {}; st.audit = []; st.raw = null; st.project = { ...(st.project||{}), klant: opts.klant||'', object: opts.object||'', adres: opts.adres||'', status: 'nieuw', omschrijving: opts.omschrijving||'' }; }
+  else { st.project = { ...(st.project||{}), ...(opts.project||{}) }; st.ai = await aiVan(id); }   // volledige kopie neemt ook de AI-voorstellen mee
+  return createDossier(naam, st, { portefeuille: opts.portefeuille ?? src.portefeuille ?? null });
+}
+/** naar de prullenbak: het project blijft met alle historie bestaan en is terug te zetten */
+async function deleteDossier(id) { const { error } = await sb.from('dossiers').update({ verwijderd_op: new Date().toISOString(), verwijderd_door: user.id, updated_by: user.id }).eq('id', id); if (error) throw error; if (dossier?.id === id) { dossier = null; localStorage.removeItem('stemi_dossier'); } }
+async function herstelUitPrullenbak(id) { const { error } = await sb.from('dossiers').update({ verwijderd_op: null, verwijderd_door: null, updated_by: user.id }).eq('id', id); if (error) throw error; }
+/** definitief weg, inclusief audittrail, AI-runs en back-ups (cascade). Alleen eigenaar of beheerder. */
+async function definitiefVerwijderen(id) { const { error } = await sb.from('dossiers').delete().eq('id', id); if (error) throw error; if (dossier?.id === id) { dossier = null; localStorage.removeItem('stemi_dossier'); } }
+async function zetPortefeuille(id, naam) { const { error } = await sb.from('dossiers').update({ portefeuille: naam || null, updated_by: user.id }).eq('id', id); if (error) throw error; if (dossier?.id === id) dossier.portefeuille = naam || null; }
+
+// ---------- leden en gebruikers ----------
+async function ledenVan(dossierId) {
+  const { data, error } = await sb.from('dossier_leden').select('user_id,rol,toegevoegd_op').eq('dossier_id', dossierId); if (error) throw error;
+  const ids = (data||[]).map(l => l.user_id); let pr = [];
+  if (ids.length) { const r = await sb.from('profiles').select('id,username,display_name,role').in('id', ids); pr = r.data || []; }
+  return (data||[]).map(l => { const p = pr.find(x => x.id === l.user_id) || {}; return { ...l, username: p.username || '', naam: p.display_name || p.username || '(onbekend)', beheerder: p.role === 'admin' }; })
+    .sort((a,b) => (a.rol === 'eigenaar' ? -1 : b.rol === 'eigenaar' ? 1 : a.naam.localeCompare(b.naam)));
+}
+async function zetLid(dossierId, userId, rol) { const { error } = await sb.from('dossier_leden').upsert({ dossier_id: dossierId, user_id: userId, rol, toegevoegd_door: user.id }); if (error) throw error; }
+async function verwijderLid(dossierId, userId) { const { error } = await sb.from('dossier_leden').delete().eq('dossier_id', dossierId).eq('user_id', userId); if (error) throw error; }
+async function alleGebruikers() { const { data, error } = await sb.from('profiles').select('id,username,display_name,role').order('username'); if (error) throw error; return data || []; }
+async function zetGebruikersRol(userId, role) { const { error } = await sb.from('profiles').update({ role }).eq('id', userId); if (error) throw error; }
 
 /** state opslaan (debounced). Conflictdetectie op versie: als een ander de dossier intussen wijzigde, wordt de remote versie geladen. */
-function persist(state) { dirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(() => flush(state), 700); }
+let laatsteKpi = null;
+function persist(state, kpi) { dirty = true; if (kpi) laatsteKpi = kpi; clearTimeout(saveTimer); saveTimer = setTimeout(() => flush(state), 700); }
 async function flush(state) {
-  if (!dossier || !user || saving) return; saving = true; setStatus('opslaan…');
+  if (!dossier || !user || saving) return;
+  // leesrechten: niet proberen op te slaan (de database zou het weigeren en dat vult de foutenlijst)
+  if (!magSchrijven()) { dirty = false; setStatus('alleen lezen – niet opgeslagen', true); return; }
+  saving = true; setStatus('opslaan…');
   try {
     const { data: cur } = await sb.from('dossiers').select('versie,updated_by').eq('id', dossier.id).single();
     if (cur && cur.versie !== dossier.versie && cur.updated_by !== user.id) { setStatus('conflict – herladen'); saving = false; if (confirm('Dit dossier is intussen door een andere gebruiker gewijzigd. Herladen met hun versie? (Annuleren = jouw versie opslaan en hun wijzigingen overschrijven)')) { location.reload(); return; } }
-    const { data, error } = await sb.from('dossiers').update({ state, meta: metaVan(state), updated_by: user.id }).eq('id', dossier.id).select('versie,updated_at').single();
+    const { data, error } = await sb.from('dossiers').update({ state: zonderAi(state), meta: metaVan(state, laatsteKpi), updated_by: user.id }).eq('id', dossier.id).select('versie,updated_at').single();
     if (error) throw error; dossier.versie = data.versie; dossier.updated_at = data.updated_at; dirty = false; setStatus('opgeslagen ' + new Date().toLocaleTimeString('nl-NL'));
   } catch (e) { console.error(e); setStatus('opslaan mislukt: ' + e.message, true); logFout('opslaan', e.message, { soort: 'persist', details: { dossier: dossier?.naam, versie: dossier?.versie } }); }
   saving = false;
@@ -88,5 +149,7 @@ function showLogin(onDone) {
   const form = $('#loginForm'); form.onsubmit = async e => { e.preventDefault(); const st = $('#loginStatus'); st.innerHTML = '<span class="spin"></span>inloggen…'; try { await login($('#loginUser').value, $('#loginPass').value); ov.classList.add('hidden'); onDone(); } catch (err) { st.innerHTML = `<span class="warn">${err.message}</span>`; } };
   setTimeout(() => $('#loginUser').focus(), 50);
 }
-return { sb, init, login, logout, token, get user(){return user}, get profile(){return profile}, get dossier(){return dossier}, listDossiers, openDossier, createDossier, renameDossier, duplicateDossier, deleteDossier, metaVan, backupsVan, herstelDossier, persist, flush, logAudit, logAiRun, logFout, foutSamenvatting, laatsteFouten, aiRunsVan, auditFromDb, getSetting, setSetting, getShared, setShared, get isAdmin(){return isAdmin()}, showLogin, setStatus };
+return { sb, init, login, logout, token, get user(){return user}, get profile(){return profile}, get dossier(){return dossier}, listDossiers, openDossier, createDossier, renameDossier, duplicateDossier, deleteDossier,
+  herstelUitPrullenbak, definitiefVerwijderen, zetPortefeuille, ledenVan, zetLid, verwijderLid, alleGebruikers, zetGebruikersRol, aiVan, zetAi, zetAlleAi, wisAi, magSchrijven, magBeheren, mijnRolIn,
+  metaVan, backupsVan, herstelDossier, persist, flush, logAudit, logAiRun, logFout, foutSamenvatting, laatsteFouten, aiRunsVan, auditFromDb, getSetting, setSetting, getShared, setShared, get isAdmin(){return isAdmin()}, showLogin, setStatus };
 })();

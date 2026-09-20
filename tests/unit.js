@@ -214,6 +214,15 @@ ok('core.js en prep.js laden in Node', !!C && !!P);
   ok('een scenario toepassen verzet de jaren en logt dat', k > 0 && C.state.audit.length === aV + k, `${k} verschoven`);
   C.state.maatregelen = []; C.recompute();
 
+  // ---------- kengetallen voor de projectenlijst en de portefeuillelaag ----------
+  C.recompute();
+  const kpi = C.kpiVan();
+  ok('kengetallen bevatten de drie MJOP-totalen', kpi.totaal === Math.round(C.calc.totaal) && kpi.totaalIndex === Math.round(C.calc.totaalIndex) && kpi.totaalNpv === Math.round(C.calc.totaalNpv),
+    `${kpi.totaal} / ${kpi.totaalIndex} / ${kpi.totaalNpv}`);
+  ok('kengetallen tellen de prioriteiten per klasse', Object.values(kpi.perPrio).reduce((a, b) => a + b, 0) === C.calc.rows.filter(r => r.prio).length, JSON.stringify(kpi.perPrio));
+  ok('kengetallen bevatten de eerste vijf jaarbedragen', kpi.eersteJaren.length === 5 && kpi.eersteJaren.every(v => Number.isInteger(v)), kpi.eersteJaren.join('/'));
+  ok('kengetallen melden hoeveel regels compleet zijn', kpi.compleet === C.calc.rows.filter(r => r.status === 'Compleet').length, String(kpi.compleet));
+
   // ---------- MJOP-rapport ----------
   C.state.project = { klant: 'Testklant', object: 'Loods 1', adres: 'Teststraat 1', status: 'actief', omschrijving: 'unit-test' };
   const rap = ctx.STEMI_UI.rapportHtml({ jaren: 15, topN: 10, onderbouwing: true, bijlagen: true, audit: true, conditie: true, scenarios: true });
