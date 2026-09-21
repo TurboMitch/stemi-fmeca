@@ -107,7 +107,7 @@ function rapportHtml(o = {}) {
 
   const planning = `<h2>4 Meerjarenplanning ${jaren[0]} – ${jaren[jaren.length-1]}</h2>
     <p>Bedragen geïndexeerd naar het uitvoeringsjaar${P.btwWeergave==='incl'?' en inclusief btw':', exclusief btw'}. Een handeling met een cyclus komt in elk herhalingsjaar terug.</p>
-    ${o.word ? barTable(jaren, serie, num(P.budgetplafond)) : window.STEMI_UI.barChart(jaren, serie, { cap: num(P.budgetplafond) })}
+    ${o.word ? barTable(jaren, serie, num(P.budgetplafond)) : window.STEMI_UI.barChart(jaren, serie, { cap: num(P.budgetplafond), w: { vast: true, w: 900 } })}
     ${tbl(['Jaar','Prijspeil','Geïndexeerd','Incl. btw','Contante waarde','Cumulatief geïndexeerd'],
       jaren.map((j,i)=>[String(j), C.calc.perJaar[i], C.calc.perJaarIndex[i], C.calc.perJaarBtw[i], C.calc.perJaarNpv[i], cum[i]]))}
     <h3>4.1 Handelingen per jaar</h3>
@@ -122,7 +122,7 @@ function rapportHtml(o = {}) {
     return `<h2>5 Conditieprognose</h2>
     <p>De NEN 2767-conditie loopt naar 6 (zeer slecht) op het faalmoment T. Een handeling zet de conditie terug — vervangen naar 1, herstellen naar 2, reinigen of conserveren een stap — waarna de degradatie opnieuw begint over de levensduur van het bouwdeel. Onderstaande prognose zet het geplande onderhoud tegenover niets doen${pg.gewogen ? ', gewogen naar hoeveelheid' : ''}.</p>
     <p class="note">T is bepaald voor ${(bron.model || 0) + (bron.code || 0)} van de ${R.length} regels: ${Object.entries(bron).map(([b, c]) => `${c}× ${({ code: 'een vaste regel per gebrekcode', model: 'het restlevensduurmodel per bouwdeelcategorie', onbekend: 'nog niet (de specialist bepaalt)' })[b] || b}`).join(', ')}.</p>
-    ${o.word ? '' : window.STEMI_UI.lineChart(jn, [{ naam: 'Met het geplande onderhoud', waarden: r1(pg.gemMet) }, { naam: 'Zonder ingrijpen', waarden: r1(pg.gemZonder), stippel: true }], { min: 1, max: 6 })}
+    ${o.word ? '' : window.STEMI_UI.lineChart(jn, [{ naam: 'Met het geplande onderhoud', waarden: r1(pg.gemMet) }, { naam: 'Zonder ingrijpen', waarden: r1(pg.gemZonder), stippel: true }], { min: 1, max: 6, w: { vast: true, w: 900 } })}
     ${tbl(['Jaar', 'Gemiddelde conditie met plan', 'Gemiddelde conditie zonder ingrijpen', 'Regels conditie ≥ 5 (met plan)', 'Regels conditie ≥ 5 (zonder)'],
       jn.map((j, i) => [String(j), String(Math.round(pg.gemMet[i] * 10) / 10), String(Math.round(pg.gemZonder[i] * 10) / 10), String(pg.slechtMet[i]), String(pg.slechtZonder[i])]))}
     <h3>5.1 Restlevensduur per regel</h3>

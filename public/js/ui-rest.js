@@ -23,7 +23,7 @@ function renderOverzicht() {
       <div class="card kpi"><div class="lbl">Overrides</div><div class="val">${R.filter(r=>r.safety).length} / ${R.filter(r=>r.compliance).length}</div><div class="hint">safety / compliance</div></div>
     </div>
     <div class="grid three" style="margin-top:14px">
-      <div class="card"><h3 style="margin-top:0">MJOP-kosten per jaar (eerste 15 jaar)</h3>${window.STEMI_UI.barChart(C.calc.jaren.slice(0,15), C.calc.perJaar.slice(0,15))}</div>
+      <div class="card"><h3 style="margin-top:0">MJOP-kosten per jaar (eerste 15 jaar)</h3>${window.STEMI_UI.barChart(C.calc.jaren.slice(0,15), C.calc.perJaar.slice(0,15), {h:360})}</div>
       <div class="card"><h3 style="margin-top:0">Prioriteitsverdeling</h3><div class="bars">${C.PRIOS.map(p=>`<div class="bar"><span>${pill(p)}</span><div class="track"><div class="fill" style="width:${R.length?cnt(p)/R.length*100:0}%;background:var(--${p.toLowerCase()})"></div></div><span class="v">${cnt(p)}</span></div>`).join('')}</div></div>
       <div class="card"><h3 style="margin-top:0">Risicomatrix O × S (waarde)</h3>${matrix(R)}</div>
     </div>
@@ -72,7 +72,7 @@ function conditieHtml() {
   return `<h3 style="margin-top:18px">Conditieprognose ${jaren[0]}–${jaren[jaren.length-1]}</h3>
     <p class="note">NEN 2767-conditie per jaar${pg.gewogen?' (gewogen naar hoeveelheid)':''}: met de geplande handelingen tegenover niets doen. De conditie loopt naar 6 op het faalmoment T; een handeling zet de conditie terug (vervangen → 1, herstellen → 2, reinigen/conserveren → een stap beter) en daarna begint de degradatie opnieuw. T komt ${Object.entries(bron).map(([b,c])=>`${c}× uit ${({code:'een vaste regel per gebrekcode',model:'het restlevensduurmodel',onbekend:'niets (specialist bepaalt)'})[b]||b}`).join(', ')}.</p>
     <div class="toolbar"><label class="note">Toon <select id="cpN">${[10,15,20,30,40].map(x=>`<option ${x===n?'selected':''}>${x}</option>`).join('')}</select> jaar</label><span class="spacer"></span><span class="note">Gemiddelde conditie in ${jaren[jaren.length-1]}: <b>${Math.round(pg.gemMet[n-1]*10)/10}</b> met plan tegenover <b>${Math.round(pg.gemZonder[n-1]*10)/10}</b> zonder ingrijpen</span></div>
-    <div class="card">${window.STEMI_UI.lineChart(jaren, [{naam:'Met de geplande handelingen', waarden:r1(pg.gemMet)}, {naam:'Zonder ingrijpen', waarden:r1(pg.gemZonder), stippel:true}])}</div>
+    <div class="card">${window.STEMI_UI.lineChart(jaren, [{naam:'Met de geplande handelingen', waarden:r1(pg.gemMet)}, {naam:'Zonder ingrijpen', waarden:r1(pg.gemZonder), stippel:true}], {w:1600, h:240})}</div>
     <div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>ID</th><th>Element</th><th>Prio</th><th>Conditie nu</th><th>T (jr)</th><th>Levensduur</th><th>Curve</th>${jaren.map(j=>`<th>${j}</th>`).join('')}</tr></thead><tbody>
     ${pg.rijen.slice(0,120).map(x=>`<tr><td>${x.id}</td><td>${esc(x.element)}</td><td>${pill(x.prio)}</td><td class="num">${x.nu}</td><td class="num">${x.T==null?'—':Math.round(x.T*10)/10}</td><td class="num note">${x.L}</td><td class="note">${esc(x.vorm)}</td>${x.met.slice(0,n).map(c=>`<td class="num ${kleur(c)}">${Math.round(c*10)/10}</td>`).join('')}</tr>`).join('')}
     <tr><td colspan="7"><b>Gemiddeld met plan</b></td>${r1(pg.gemMet).map(c=>`<td class="num ${kleur(c)}"><b>${c}</b></td>`).join('')}</tr>

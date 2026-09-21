@@ -37,7 +37,7 @@ h2{margin:0 0 4px;font-size:20px}h3{margin:18px 0 8px;font-size:15px}
 @media(max-width:900px){.two,.three{grid-template-columns:1fr}}
 .tablewrap{overflow:auto;border:1px solid var(--line);border-radius:var(--radius);background:var(--card)}
 table{border-collapse:collapse;width:100%;font-size:13px}
-th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;white-space:nowrap}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle;white-space:nowrap}
 th{position:sticky;top:0;background:var(--card);font-weight:600;font-size:12px;color:var(--muted);z-index:1}
 td.wrap,th.wrap{white-space:normal;min-width:220px}
 td.num{text-align:right;font-variant-numeric:tabular-nums}
@@ -47,6 +47,9 @@ tr:hover td{background:color-mix(in srgb,var(--accent) 4%,transparent)}
 .tag{display:inline-block;padding:1px 6px;border-radius:6px;font-size:11px;background:var(--accent-soft);color:var(--accent)}
 input,select,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:4px 6px}
 td input,td select{width:100%;min-width:56px}
+td input:not(.n):not([type=checkbox]):not([type=radio]){min-width:110px}
+td select{min-width:96px}
+table.mini td{white-space:normal}table.mini td.num{white-space:nowrap}
 td input.n{width:56px;text-align:right}
 td textarea{width:260px;min-height:38px;resize:vertical}
 td.oranje,.oranje{background:var(--oranje)}td.geel,.geel{background:var(--geel)}td.groen,.groen{background:var(--groen)}td.blauw,.blauw{background:var(--blauw)}
@@ -58,8 +61,9 @@ td.oranje,.oranje{background:var(--oranje)}td.geel,.geel{background:var(--geel)}
 .bar .fill{height:100%;background:var(--accent)}
 .bar .v{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
 svg text{fill:var(--ink)}
-.chart{width:100%;height:auto}
-.matrix{display:grid;grid-template-columns:auto repeat(10,1fr);gap:2px;font-size:11px}
+.chart{width:100%;height:auto;display:block;margin:0 auto}
+.grid>*{min-width:0}
+.matrix{display:grid;grid-template-columns:auto repeat(10,1fr);gap:2px;font-size:11px;max-width:300px;margin:0 auto}
 .matrix .cell{aspect-ratio:1;border-radius:3px;display:flex;align-items:center;justify-content:center;font-weight:600;color:#fff;min-height:22px}
 .matrix .hdr{color:var(--muted);display:flex;align-items:center;justify-content:center}
 .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0 12px}
@@ -128,7 +132,7 @@ tr.sub td{border-top:0}
 .projsel{display:inline-flex;align-items:center;gap:6px}
 .projsel select{max-width:260px;font-weight:600;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--card);font:inherit}
 
-.qbar{height:8px;background:var(--line);border-radius:4px;width:160px;overflow:hidden}.qbar div{height:100%}.qbar .ok{background:#3aa66a}.qbar .mid{background:#e0a020}.qbar .low{background:#d64545}
+.qbar{height:8px;background:var(--line);border-radius:4px;width:160px;max-width:28vw;overflow:hidden}.qbar div{height:100%}.qbar .ok{background:#3aa66a}.qbar .mid{background:#e0a020}.qbar .low{background:#d64545}
 [data-map]{min-width:170px;max-width:220px}
 .card.blok{border-color:#d64545;background:color-mix(in srgb,#d64545 6%,var(--card))}
 .card.blok ul{margin:6px 0 0;padding-left:20px;font-size:12px}
@@ -164,8 +168,11 @@ table.mini{max-height:none}
   .kpis{grid-template-columns:1fr 1fr}
 }
 @media(max-width:520px){
-  .kpis{grid-template-columns:1fr}
+  .kpis{grid-template-columns:1fr 1fr}
+  .kpi .val{font-size:20px}
+  .flow .arrow{display:none}
   .projsel select{max-width:150px}
-  .chart{min-height:160px}
+
 }
 @media print{ .top,.toolbar,.tabs,.actions,#drawer,#toast{display:none!important} .tab{display:block!important} .tablewrap{max-height:none;overflow:visible} }
+.card>:first-child,.card>h3:first-of-type{margin-top:0}
