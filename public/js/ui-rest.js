@@ -5,8 +5,8 @@ const C = window.STEMI; const { $, $$, esc, num, eur, pct, pill, ASP, ASP_SHORT 
 // ---------- Overzicht ----------
 function matrix(R) {
   let h = '<div class="matrix"><div class="hdr">S\\O</div>' + Array.from({length:10},(_,i)=>`<div class="hdr">${i+1}</div>`).join('');
-  for (let s=10;s>=1;s--) { h += `<div class="hdr">${s}</div>`; for (let o=1;o<=10;o++) { const ids=R.filter(r=>Math.round(r.Swaarde)===s&&r.O===o).map(r=>r.id); const risk=s*o; const col=risk>=50?'var(--p1)':risk>=30?'var(--p2)':risk>=15?'var(--p3)':'var(--p4)'; h+=`<div class="cell" style="background:${col};opacity:${ids.length?1:.18}">${ids.join(',')}</div>`; } }
-  return h + '</div><p class="note">Cellen tonen regel-ID’s op afgeronde waarde-severity × O.</p>';
+  for (let s=10;s>=1;s--) { h += `<div class="hdr">${s}</div>`; for (let o=1;o<=10;o++) { const ids=R.filter(r=>Math.round(r.Swaarde)===s&&r.O===o).map(r=>r.id); const risk=s*o; const col=risk>=50?'var(--p1)':risk>=30?'var(--p2)':risk>=15?'var(--p3)':'var(--p4)'; h+=`<div class="cell" style="background:${col};opacity:${ids.length?1:.18}"${ids.length?` title="S ${s} × O ${o}: regel ${ids.join(', ')}"`:''}>${ids.length===1?ids[0]:ids.length?ids.length+'×':''}</div>`; } }
+  return h + '</div><p class="note">Eén regel: het regel-ID; meer regels: het aantal (bijv. 11×). Beweeg over een cel voor de ID’s. As: afgeronde waarde-severity × O.</p>';
 }
 function renderOverzicht() {
   const R = C.calc.rows, cnt = p => R.filter(r => r.prio === p).length, S = C.state.settings;

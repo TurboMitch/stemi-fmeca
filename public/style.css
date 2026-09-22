@@ -11,7 +11,7 @@
 }
 *{box-sizing:border-box}
 body{margin:0;font-family:var(--font);background:var(--bg);color:var(--ink);font-size:14px;line-height:1.45}
-.top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:16px;padding:10px 20px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:16px;padding:10px max(20px, calc((100% - 2200px) / 2 + 20px));background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
 .brand{font-size:15px;display:flex;align-items:center;gap:8px;white-space:nowrap}
 .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--accent)}
 .tabs{display:flex;gap:2px;flex-wrap:wrap}
@@ -23,7 +23,7 @@ body{margin:0;font-family:var(--font);background:var(--bg);color:var(--ink);font
 .btn.ghost{background:transparent;color:var(--accent);border-color:var(--line)}
 .btn.small{padding:4px 8px;font-size:12px}
 .btn:disabled{opacity:.5;cursor:default}
-main{padding:20px;max-width:1700px;margin:0 auto}
+main{padding:20px;max-width:2200px;margin:0 auto}
 .tab{display:none}.tab.active{display:block}
 h2{margin:0 0 4px;font-size:20px}h3{margin:18px 0 8px;font-size:15px}
 .sub{color:var(--muted);margin:0 0 16px}
@@ -56,15 +56,15 @@ td.oranje,.oranje{background:var(--oranje)}td.geel,.geel{background:var(--geel)}
 .legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin:6px 0 12px}
 .legend span{padding:2px 8px;border-radius:6px}
 .bars{display:flex;flex-direction:column;gap:6px}
-.bar{display:grid;grid-template-columns:140px 1fr 70px;align-items:center;gap:8px;font-size:13px}
+.bar{display:grid;grid-template-columns:minmax(40px,max-content) 1fr 56px;align-items:center;gap:8px;font-size:13px}
 .bar .track{height:14px;background:var(--line);border-radius:4px;overflow:hidden}
 .bar .fill{height:100%;background:var(--accent)}
 .bar .v{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
 svg text{fill:var(--ink)}
 .chart{width:100%;height:auto;display:block;margin:0 auto}
 .grid>*{min-width:0}
-.matrix{display:grid;grid-template-columns:auto repeat(10,1fr);gap:2px;font-size:11px;max-width:300px;margin:0 auto}
-.matrix .cell{aspect-ratio:1;border-radius:3px;display:flex;align-items:center;justify-content:center;font-weight:600;color:#fff;min-height:22px}
+.matrix{display:grid;grid-template-columns:auto repeat(10,minmax(0,1fr));gap:2px;font-size:11px;max-width:300px;margin:0 auto}
+.matrix .cell{aspect-ratio:1;overflow:hidden;white-space:nowrap;font-size:10px;border-radius:3px;display:flex;align-items:center;justify-content:center;font-weight:600;color:#fff;min-height:22px}
 .matrix .hdr{color:var(--muted);display:flex;align-items:center;justify-content:center}
 .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0 12px}
 .toolbar .spacer{flex:1}
@@ -176,3 +176,8 @@ table.mini{max-height:none}
 }
 @media print{ .top,.toolbar,.tabs,.actions,#drawer,#toast{display:none!important} .tab{display:block!important} .tablewrap{max-height:none;overflow:visible} }
 .card>:first-child,.card>h3:first-of-type{margin-top:0}
+.top .brandsub{display:none}
+@media(max-width:1800px){.tabs button{padding:8px 9px}.top{gap:10px}}
+@media(min-width:821px){.top{flex-wrap:nowrap}.tabs{flex-wrap:wrap;overflow:visible;flex:1 1 auto;min-width:0}.tabs button{white-space:nowrap;flex:none}.actions{flex:none;white-space:nowrap}}
+@media(min-width:821px) and (max-width:1750px){.top{flex-wrap:wrap;row-gap:4px;padding-bottom:4px}.tabs{order:3;flex-basis:100%;flex-wrap:wrap;overflow:visible;margin-left:-8px}.tabs button{padding:6px 10px}}
+@media(min-width:821px) and (max-width:1400px){.tabs button{padding:6px 7px;font-size:13px}}
