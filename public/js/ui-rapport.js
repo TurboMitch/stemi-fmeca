@@ -4,7 +4,11 @@ const C = window.STEMI; const { $, $$, esc, num, eur, pct, pct1 } = C;
 const D = () => new Date().toLocaleDateString('nl-NL', { day:'numeric', month:'long', year:'numeric' });
 
 /** huisstijl staat in de gedeelde instellingen, zodat elk project hetzelfde rapport oplevert */
-function hs() { C.cfg.huisstijl = Object.assign({ bedrijf:'STEMI', kleur:'#12776a', logo:'', voettekst:'' }, C.cfg.huisstijl || {}); return C.cfg.huisstijl; }
+/** alleen een hex-kleur mag de stylesheet in; alles anders valt terug op de standaardkleur */
+const kleurOk = k => /^#[0-9a-f]{6}$/i.test(String(k||'')) ? k : '#12776a';
+/** een logo is uitsluitend een data-URL van een afbeelding (komt uit de gedeelde instellingen, dus van een collega) */
+const logoOk = l => /^data:image\/(png|jpeg|gif|webp|svg\+xml);base64,[a-z0-9+/=]+$/i.test(String(l||'')) ? l : '';
+function hs() { C.cfg.huisstijl = Object.assign({ bedrijf:'STEMI', kleur:'#12776a', logo:'', voettekst:'' }, C.cfg.huisstijl || {}); const K = C.cfg.huisstijl; K.kleur = kleurOk(K.kleur); K.logo = logoOk(K.logo); return K; }
 const opts = () => { C.cfg.rapport = Object.assign({ jaren:15, onderbouwing:true, audit:true, bijlagen:true, topN:10, conditie:true, scenarios:true }, C.cfg.rapport || {}); return C.cfg.rapport; };
 
 // ---------- bouwstenen ----------
@@ -38,7 +42,7 @@ function rapportHtml(o = {}) {
   const p15 = serie.reduce((a,b)=>a+b,0);
 
   const kop = `<div class="cover">
-    ${K.logo?`<img class="logo" src="${K.logo}" alt="">`:`<div class="brandtext">${esc(K.bedrijf||'')}</div>`}
+    ${K.logo?`<img class="logo" src="${esc(K.logo)}" alt="">`:`<div class="brandtext">${esc(K.bedrijf||'')}</div>`}
     <h1>Meerjarenonderhoudsplan</h1>
     <p class="lead">Waardegestuurd onderhoudsplan op basis van NEN 2767-inspectie, FMECA-risicoanalyse en het waardekompas (NEN 8026)</p>
     ${tbl(['Onderdeel','Gegeven'], [
@@ -165,7 +169,7 @@ function rapportHtml(o = {}) {
         ['Kans O', String(r.O??'—') + (C.oKlasse(r.O)?` – ${esc(C.oKlasse(r.O))}`:''), esc(s.onderbouwingO || r.oInfo?.uitleg || ''), bron('O')],
         ['Detecteerbaarheid D', String(r.D??'—') + (C.dKlasse(r.D)?` – ${esc(C.dKlasse(r.D))}`:''), esc(s.onderbouwingD || C.voorstelDtekst(r.insp.inspecteerbaarheid)), bron('D')],
         ['Faalmoment T', r.Tjaar==null?'—':`${esc(r.Tklasse||'')} (${r.Tjaar} jaar, deadline ${r.deadline??'—'})`, esc(s.onderbouwingT || r.tTxtSys || ''), bron('Tjaar')],
-        ['Effect per waardeaspect', C.ASP.map((a,i)=>`${C.ASP_SHORT[i]} ${r.effect[i]}`).join(' · '), esc(s.onderbouwingEffect||''), bron('effect')],
+        ['Effect per waardeaspect', C.ASP.map((a,i)=>`${esc(C.ASP_SHORT[i])} ${r.effect[i]}`).join(' · '), esc(s.onderbouwingEffect||''), bron('effect')],
         ['Risico', `S ${Math.round(r.Swaarde*10)/10} × O ${r.O??'—'} × D ${r.D??'—'} = RPN ${r.RPNwaarde==null?'—':Math.round(r.RPNwaarde)}`, `prioriteit ${r.prio||'—'} via ${r.drivers.join(', ')||'—'}; dominant ${esc(r.domWaarde)}`, 'systeemregel'],
         ['Maatregel', esc(s.maatregel || r.insp.maatregel || '—'), esc(s.restToelichting||''), bron('maatregel')],
         ['Restrisico na maatregel', (s.restS!=null||s.restO!=null||s.restD!=null)?`S ${s.restS??'—'} · O ${s.restO??'—'} · D ${s.restD??'—'}`:'—', esc(s.restToelichting||''), bron('restS')],
@@ -202,11 +206,11 @@ function rapportHtml(o = {}) {
   const css = `
   /* het rapport is een zelfstandig document: de variabelen uit de app-stylesheet hier opnieuw zetten,
      anders vallen de staven in het diagram terug op zwart */
-  :root { --accent: ${K.kleur}; --line: #d5dbe0; --rood: #c0392b; }
+  :root { --accent: ${kleurOk(K.kleur)}; --line: #d5dbe0; --rood: #c0392b; }
   @page { size: A4 portrait; margin: 18mm 14mm; }
   body { font: 10pt/1.45 "Segoe UI", Arial, sans-serif; color:#1b1f23; margin:0; padding:14px; }
-  h1 { font-size: 24pt; margin:.2em 0 .1em; color:${K.kleur}; }
-  h2 { font-size: 14pt; margin:1.6em 0 .4em; color:${K.kleur}; border-bottom:2px solid ${K.kleur}; padding-bottom:3px; page-break-after:avoid; }
+  h1 { font-size: 24pt; margin:.2em 0 .1em; color:${kleurOk(K.kleur)}; }
+  h2 { font-size: 14pt; margin:1.6em 0 .4em; color:${kleurOk(K.kleur)}; border-bottom:2px solid ${kleurOk(K.kleur)}; padding-bottom:3px; page-break-after:avoid; }
   h3 { font-size: 11.5pt; margin:1.2em 0 .3em; page-break-after:avoid; }
   h4 { font-size: 10.5pt; margin:1em 0 .3em; page-break-after:avoid; }
   p, li { margin:.35em 0; }
@@ -218,12 +222,12 @@ function rapportHtml(o = {}) {
   table.bars, table.bars td, table.bars th { border:0; }
   table.bars th { background:none; width:44px; text-align:right; padding-right:6px; }
   table.bar, table.bar td { border:0; padding:0; height:11px; }
-  .cover { border-bottom:3px solid ${K.kleur}; padding-bottom:12px; margin-bottom:6px; }
+  .cover { border-bottom:3px solid ${kleurOk(K.kleur)}; padding-bottom:12px; margin-bottom:6px; }
   .cover .logo { max-height:52px; margin-bottom:10px; }
-  .brandtext { font-size:15pt; font-weight:700; color:${K.kleur}; letter-spacing:.5px; }
+  .brandtext { font-size:15pt; font-weight:700; color:${kleurOk(K.kleur)}; letter-spacing:.5px; }
   .lead { font-size:11pt; color:#4a5560; margin-bottom:12px; }
   .note { font-size:8pt; color:#5d6a75; }
-  .tag { font-size:8pt; background:${K.kleur}; color:#fff; border-radius:8px; padding:1px 7px; vertical-align:middle; }
+  .tag { font-size:8pt; background:${kleurOk(K.kleur)}; color:#fff; border-radius:8px; padding:1px 7px; vertical-align:middle; }
   .regel { page-break-inside:avoid; border-top:1px solid #e3e8ec; padding-top:6px; margin-top:10px; }
   .bevind li { margin:.3em 0; }
   .chart { width:100%; height:auto; }
@@ -292,10 +296,10 @@ function render() {
   $('#rapPrint').onclick = () => { const w = fr.contentWindow; w.focus(); w.print(); };
   $('#rapWord').onclick = () => download(bestandsnaam('doc'), rapportHtml({ ...O, word: true }), 'application/msword');
   $('#rapHtml').onclick = () => download(bestandsnaam('html'), doc(), 'text/html');
-  $('#hsSave').onclick = () => { K.bedrijf = $('#hsBedrijf').value; K.kleur = $('#hsKleur').value; K.voettekst = $('#hsVoet').value; C.saveCfg(true); C.toast('Huisstijl opgeslagen'); render(); };
+  $('#hsSave').onclick = () => { K.bedrijf = $('#hsBedrijf').value; K.kleur = kleurOk($('#hsKleur').value); K.voettekst = $('#hsVoet').value; C.saveCfg(true); C.toast('Huisstijl opgeslagen'); render(); };
   $('#hsLogo').onchange = e => { const f = e.target.files[0]; if (!f) return;
     if (f.size > 300000) { alert('Het logo is groter dan 300 kB; gebruik een kleinere afbeelding.'); return; }
-    const rd = new FileReader(); rd.onload = () => { K.logo = rd.result; C.saveCfg(true); render(); }; rd.readAsDataURL(f); };
+    const rd = new FileReader(); rd.onload = () => { K.logo = logoOk(rd.result); if (!K.logo) { C.toast('Alleen png, jpeg, gif, webp of svg'); return; } C.saveCfg(true); render(); }; rd.readAsDataURL(f); };
   const dl = $('#hsLogoDel'); if (dl) dl.onclick = () => { K.logo = ''; C.saveCfg(true); render(); };
 }
 window.STEMI_UI = window.STEMI_UI || {}; Object.assign(window.STEMI_UI, { renderRapport: render, rapportHtml });

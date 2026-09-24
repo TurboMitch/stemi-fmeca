@@ -20,7 +20,16 @@ const SP_FIELDS = ['faalwijze','O','onderbouwingO','D','onderbouwingD','Tklasse'
 const $ = (s, el=document) => el.querySelector(s);
 const $$ = (s, el=document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const num = v => (v === '' || v === null || v === undefined || isNaN(+v)) ? null : +v;
+const num = v => (v === '' || v === null || v === undefined || (typeof v === 'string' && !v.trim()) || isNaN(+v) || !isFinite(+v)) ? null : +v;
+/** Getal uit handmatige invoer in Nederlandse of Engelse notatie: "1.500" → 1500, "12,5" → 12.5, "1.234,56" → 1234.56, "€ 2.000" → 2000. */
+const numNL = v => {
+  if (typeof v === 'number') return num(v);
+  let t = String(v ?? '').trim().replace(/[€\s]/g, ''); if (!t) return null;
+  if (/^[-+]?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(t) && !/^[-+]?\d{1,3}(\.\d{3})+$/.test(t)) return num(t);   // gewoon decimaal met punt ("12.5"), maar "1.500" is een duizendtal
+  t = t.replace(/\./g, '').replace(',', '.');
+  return /^[-+]?\d+(\.\d+)?$/.test(t) ? num(t) : null;
+};
+const PARAM_NUM = { startjaar: 2026, horizon: 40, oRef: 5, nenSignaal: 5, omslagDefault: 0.65, prijspeil: null, inflatie: 0.03, btwPercentage: 21, discontovoet: 0.025, budgetplafond: null };
 const eur = v => v == null ? '' : new Intl.NumberFormat('nl-NL',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(v);
 const pct = v => v == null ? '' : Math.round(v*100) + '%';
 /** percentage met een decimaal: 0,025 → 2,5% (inflatie en discontovoet zijn te fijn voor hele procenten) */
@@ -90,7 +99,7 @@ function kpiVan() {
     perPrio, compleet: calc.rows.filter(r => r.status === 'Compleet').length, horizon: num(state.settings.params.horizon) ?? null,
     eersteJaren: calc.perJaarIndex.slice(0, 5).map(v => Math.round(v)) };
 }
-function save() { try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch{} if (window.STEMI_DB) window.STEMI_DB.persist(state, kpiVan()); }
+function save() { if (window.STEMI_DB) window.STEMI_DB.persist(state, kpiVan()); }
 /** AI-voorstel vastleggen: in het geheugen én in de eigen tabel (niet in de projectstate) */
 function setAi(id, data) { state.ai[id] = data; if (window.STEMI_DB) window.STEMI_DB.zetAi(+id, data); }
 /* Wat hoort bij de organisatie (en dus in de database) en wat is een persoonlijke weergavevoorkeur?
@@ -99,7 +108,7 @@ function setAi(id, data) { state.ai[id] = data; if (window.STEMI_DB) window.STEM
 const CFG_GEDEELD = ['model', 'models', 'context', 'huisstijl', 'autoAI'];
 /** @param {boolean} [ookGedeeld] alleen expliciete acties (opslaan in Instellingen, huisstijl) delen */
 function saveCfg(ookGedeeld = false) {
-  try { localStorage.setItem(LS_CFG, JSON.stringify(cfg)); } catch {}
+  try { const { apiKey, ...lokaal } = cfg; localStorage.setItem(LS_CFG, JSON.stringify(lokaal)); } catch {}   // de sleutel blijft in het geheugen van deze sessie, nooit in localStorage
   if (ookGedeeld && window.STEMI_DB) {
     const deel = { apiKey: cfg.apiKey }; CFG_GEDEELD.forEach(k => { if (cfg[k] !== undefined) deel[k] = cfg[k]; });
     window.STEMI_DB.setShared(deel).catch(e => console.warn('gedeelde instellingen', e));
@@ -110,9 +119,10 @@ function getSp(id) { let sp = state.specialist.find(x=>x.id===id); if(!sp){ sp={
 /** zet een specialistveld met herkomst; logt in audit */
 function setSp(id, k, v, bron, meta={}) {
   const sp = getSp(id); const old = k.startsWith('effect') && k!=='effect' ? (sp.effect||[])[+k.slice(6)] : sp[k];
-  if (k.startsWith('effect') && k!=='effect') { sp.effect = sp.effect||[]; sp.effect[+k.slice(6)] = num(v); }
-  else if (k==='effect') sp.effect = (v||[]).map(num);
-  else if (SP_NUM.includes(k)) sp[k] = num(v);
+  const n = bron === 'mens' ? numNL : num;   // handmatige invoer mag Nederlandse notatie zijn; AI en systeem leveren getallen
+  if (k.startsWith('effect') && k!=='effect') { sp.effect = sp.effect||[]; sp.effect[+k.slice(6)] = n(v); }
+  else if (k==='effect') sp.effect = (v||[]).map(n);
+  else if (SP_NUM.includes(k)) sp[k] = n(v);
   else sp[k] = v ?? '';
   const key = k.startsWith('effect') ? 'effect' : k;
   const vorige = sp.prov[key] ? sp.prov[key].bron : (old==null||old===''? 'systeem' : undefined);
@@ -368,7 +378,7 @@ function vatEvaluatieSamen(vergelijkingen) {
 
 function recompute() {
   const S = state.settings, P = S.params, R = S.rules, bel = belangen(), fac = bel.map(b => b/5);
-  const start = num(P.startjaar) ?? 2026, horizon = num(P.horizon) ?? 40;
+  const start = num(P.startjaar) ?? 2026, horizon = Math.min(100, Math.max(1, Math.round(num(P.horizon) ?? 40)));
   const jaren = Array.from({length: horizon}, (_, i) => start + i);
   const rows = [];
   for (const insp of state.inspectie) {
@@ -545,7 +555,7 @@ async function callAgentOnce(messages, json, opts) {
   const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), opts.timeoutMs || 240000);
   let r, d;
   try {
-    r = await fetch('/api/analyze', { method:'POST', signal: ctrl.signal, headers:{'Content-Type':'application/json', ...(cfg.apiKey?{'x-openrouter-key':cfg.apiKey}:{}), ...(tok?{'Authorization':'Bearer '+tok}:{})}, body: JSON.stringify({ model: opts.model||modelFor(opts.taak||'specialist'), messages, json, max_tokens: opts.max_tokens||16000 }) });
+    r = await fetch('/api/analyze', { method:'POST', signal: ctrl.signal, headers:{'Content-Type':'application/json', ...(cfg.apiKey?{'x-openrouter-key':cfg.apiKey}:{}), ...(tok?{'Authorization':'Bearer '+tok}:{})}, body: JSON.stringify({ model: opts.model||modelFor(opts.taak||'specialist'), messages, json, max_tokens: opts.max_tokens||16000, taak: opts.taak||'specialist' }) });
     const txt = await r.text(); try { d = JSON.parse(txt); } catch { d = { error: (r.status===504?'Time-out op de server (model te traag)':'Onverwacht antwoord '+r.status) + ': ' + txt.slice(0,200) }; }
   } catch (e) { const err = new Error(e.name === 'AbortError' ? 'Time-out: het model antwoordde niet binnen 4 minuten' : 'Netwerkfout: ' + e.message); err.herkansbaar = e.name !== 'AbortError'; throw err; }
   finally { clearTimeout(t); }
@@ -605,10 +615,21 @@ function removeAspect(i) {
   syncAspects(); return true;
 }
 function migrateSettings(S) {
+  // een oud of onvolledig klantsjabloon mag de instellingen nooit half achterlaten: ontbrekende blokken krijgen de standaard
+  if (!S.params || typeof S.params !== 'object') S.params = clone(defaultSettings(seed).params);
+  if (!S.profielen || !Object.keys(S.profielen).length) S.profielen = clone(defaultSettings(seed).profielen);
+  if (!S.rules || typeof S.rules !== 'object') S.rules = defaultRules();
+  const dr = defaultRules(); Object.keys(dr).forEach(k => { if (S.rules[k] === undefined) S.rules[k] = clone(dr[k]); });
+  if (!S.scorekaarten || !Array.isArray(S.scorekaarten.O) || !S.scorekaarten.O.length || !Array.isArray(S.scorekaarten.D)) S.scorekaarten = clone(seed.scorekaarten);
+  if (!S.naam) S.naam = 'Standaard';
   if (!S.aspecten) S.aspecten = clone(seed.aspecten);
   Object.entries(FIN_DEFAULT).forEach(([k,v]) => { if (S.params[k] === undefined) S.params[k] = clone(v); });
   if (!S.rules?.tRegels) { if (S.rules) S.rules.tRegels = defaultRules().tRegels; }
   else { const d = defaultRules().tRegels; Object.keys(d).forEach(k => { if (S.rules.tRegels[k] === undefined) S.rules.tRegels[k] = d[k]; }); if (!Object.keys(S.rules.tRegels.levensduur||{}).length) S.rules.tRegels.levensduur = d.levensduur; }
+  // numerieke parameters zijn altijd getallen (oude opslag of een sjabloon kan tekst bevatten; die hoort niet in de templates)
+  Object.entries(PARAM_NUM).forEach(([k, d]) => { if (S.params[k] !== undefined && S.params[k] !== null && typeof S.params[k] !== 'number') S.params[k] = num(S.params[k]) ?? d; });
+  S.params.horizon = Math.min(100, Math.max(1, Math.round(num(S.params.horizon) ?? 40)));
+  if (S.rules?.tRegels && S.rules.tRegels.levensduurDefault !== undefined && typeof S.rules.tRegels.levensduurDefault !== 'number') S.rules.tRegels.levensduurDefault = num(S.rules.tRegels.levensduurDefault) ?? 30;
   if (S.params.prijspeil == null) S.params.prijspeil = S.params.startjaar;
   if (!S.rules.oVoorstel.ontwikkeling) { S.rules.oVoorstel = defaultRules().oVoorstel; S.rules.dVoorstel = defaultRules().dVoorstel; }
   if (!S.rules.safetyAspect) { S.rules.safetyAspect = 'Veiligheid'; S.rules.complianceAspect = 'Compliance'; }
@@ -658,7 +679,7 @@ function pasSjabloonToe(obj, opts = {}) {
 function resetState() { state = emptyState(); if (window.STEMI_DB) window.STEMI_DB.wisAi(null); save(); }
 
 return { ASP, ASP_SHORT, ONTWIKKELING, INTENSITEIT, ERNST, INSPECTEERBAAR, PRIOS, MODELS, SP_NUM, SP_FIELDS, syncAspects, addAspect, removeAspect, oKlasse, dKlasse,
-  $, $$, esc, num, eur, pct, pct1, pill, uid, toast, clone, defaultRules, defaultSettings,
+  $, $$, esc, num, numNL, eur, pct, pct1, pill, uid, toast, clone, defaultRules, defaultSettings,
   get seed(){return seed}, get lib(){return lib}, get libByCode(){return libByCode}, get state(){return state}, set state(v){state=v}, get cfg(){return cfg}, get calc(){return calc},
   save, saveCfg, CFG_GEDEELD, audit, kpiVan, setAi, sjabloonVan, pasSjabloonToe, getSp, setSp, belangen, libEntry, systeemvoorstelO, voorstelD, voorstelDtekst, voorstelT, tJaarVanKlasse, OKANS, DTEKST,
   maatregelenVan, expandCyclus, recompute, prioVan, vergelijkVoorstel, vatEvaluatieSamen, WEERGAVEN, FIN_DEFAULT, inflatieVan, indexFactor, btwFactor, npvFactor, bedrag, weergaveDefault, budgetPlan, pasBudgetToe,

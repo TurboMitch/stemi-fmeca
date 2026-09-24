@@ -1,11 +1,12 @@
 /* Supabase-laag: login, dossiers, opslag van state, audittrail, AI-runs en gedeelde instellingen */
 window.STEMI_DB = (() => {
 const CFG = window.STEMI_CONFIG; const sb = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey);
-let user = null, profile = null, dossier = null, saveTimer = null, dirty = false, saving = false;
+let user = null, profile = null, dossier = null, saveTimer = null, dirty = false, saving = false, laatsteToken = null;
+sb.auth.onAuthStateChange((_e, s) => { if (s?.access_token) laatsteToken = s.access_token; });
 const $ = s => document.querySelector(s);
 
 async function init() {
-  const { data } = await sb.auth.getSession(); if (data.session) { user = data.session.user; await loadProfile(); return true; }
+  const { data } = await sb.auth.getSession(); if (data.session) { user = data.session.user; laatsteToken = data.session.access_token; await loadProfile(); return true; }
   return false;
 }
 async function loadProfile() { const { data } = await sb.from('profiles').select('*').eq('id', user.id).maybeSingle(); profile = data || { username: user.email.split('@')[0] }; }
@@ -18,7 +19,7 @@ async function logout() { await sb.auth.signOut(); user = null; profile = null; 
 async function token() {
   let { data } = await sb.auth.getSession(); let s = data.session; if (!s) return null;
   if ((s.expires_at || 0) * 1000 - Date.now() < 5 * 60 * 1000) { const r = await sb.auth.refreshSession(); if (r.data.session) s = r.data.session; }
-  return s.access_token;
+  laatsteToken = s.access_token; return s.access_token;
 }
 
 // ---------- dossiers ----------
@@ -44,7 +45,7 @@ function magSchrijven(d = dossier) { const r = mijnRolIn(d); return r === 'behee
 function magBeheren(d = dossier) { const r = mijnRolIn(d); return r === 'beheerder' || r === 'eigenaar'; }
 /** metadata die de projectenlijst nodig heeft zonder de hele state te laden */
 function metaVan(state, kpi) { const pj = state.project || {}; return { klant: pj.klant||'', object: pj.object||'', adres: pj.adres||'', status: pj.status||'', omschrijving: pj.omschrijving||'', regels: (state.inspectie||[]).length, ai: Object.keys(state.ai||{}).length, profiel: state.settings?.naam||'', ...(kpi || {}) }; }
-async function openDossier(id) { const { data, error } = await sb.from('dossiers').select('*').eq('id', id).single(); if (error) throw error; dossier = data; localStorage.setItem('stemi_dossier', id); await rolVanDossier(); return data; }
+async function openDossier(id) { annuleerSave(); const { data, error } = await sb.from('dossiers').select('*').eq('id', id).single(); if (error) throw error; dossier = data; localStorage.setItem('stemi_dossier', id); await rolVanDossier(); return data; }
 async function rolVanDossier() { if (!dossier || !user) return; const { data } = await sb.from('dossier_leden').select('rol').eq('dossier_id', dossier.id).eq('user_id', user.id).maybeSingle(); dossier.mijnRol = data?.rol || (isAdmin() ? 'beheerder' : ''); }
 
 // ---------- AI-voorstellen (staan in een eigen tabel, niet in de projectstate) ----------
@@ -126,19 +127,40 @@ async function zetGebruikersRol(userId, role) { const { error } = await sb.from(
 
 /** state opslaan (debounced). Conflictdetectie op versie: als een ander de dossier intussen wijzigde, wordt de remote versie geladen. */
 let laatsteKpi = null;
-function persist(state, kpi) { dirty = true; if (kpi) laatsteKpi = kpi; clearTimeout(saveTimer); saveTimer = setTimeout(() => flush(state), 700); }
-async function flush(state) {
-  if (!dossier || !user || saving) return;
+let pending = null;                     // state die nog moet worden weggeschreven zodra de lopende save klaar is
+/** Plant een save. De state wordt aan het huidige dossier-id gebonden, zodat een uitgestelde save nooit in een ander (intussen geopend) project terechtkomt. */
+function persist(state, kpi) { dirty = true; if (kpi) laatsteKpi = kpi; clearTimeout(saveTimer); const id = dossier?.id; saveTimer = setTimeout(() => flush(state, id), 700); }
+/** Annuleert een geplande save; aanroepen vóór het wisselen van project. */
+function annuleerSave() { clearTimeout(saveTimer); saveTimer = null; pending = null; }
+async function flush(state, voorId) {
+  if (!dossier || !user) return;
+  if (voorId && voorId !== dossier.id) return;          // hoort bij een ander project: weggooien
+  if (saving) { pending = state; return; }              // wordt na de lopende save alsnog weggeschreven
   // leesrechten: niet proberen op te slaan (de database zou het weigeren en dat vult de foutenlijst)
   if (!magSchrijven()) { dirty = false; setStatus('alleen lezen – niet opgeslagen', true); return; }
-  saving = true; setStatus('opslaan…');
+  saving = true; setStatus('opslaan…'); const id = dossier.id;
   try {
-    const { data: cur } = await sb.from('dossiers').select('versie,updated_by').eq('id', dossier.id).single();
-    if (cur && cur.versie !== dossier.versie && cur.updated_by !== user.id) { setStatus('conflict – herladen'); saving = false; if (confirm('Dit dossier is intussen door een andere gebruiker gewijzigd. Herladen met hun versie? (Annuleren = jouw versie opslaan en hun wijzigingen overschrijven)')) { location.reload(); return; } }
-    const { data, error } = await sb.from('dossiers').update({ state: zonderAi(state), meta: metaVan(state, laatsteKpi), updated_by: user.id }).eq('id', dossier.id).select('versie,updated_at').single();
-    if (error) throw error; dossier.versie = data.versie; dossier.updated_at = data.updated_at; dirty = false; setStatus('opgeslagen ' + new Date().toLocaleTimeString('nl-NL'));
+    // optimistic locking: alleen schrijven als de versie in de database nog de versie is die wij kennen
+    const { data, error } = await sb.from('dossiers').update({ state: zonderAi(state), meta: metaVan(state, laatsteKpi), updated_by: user.id }).eq('id', id).eq('versie', dossier.versie).select('versie,updated_at').maybeSingle();
+    if (error) throw error;
+    if (!data) {
+      const { data: cur } = await sb.from('dossiers').select('versie,updated_by,updated_at').eq('id', id).single();
+      const wie = cur?.updated_by === user.id ? 'jou in een ander tabblad' : 'een andere gebruiker';
+      setStatus('conflict – niet opgeslagen', true);
+      if (confirm(`Dit project is intussen gewijzigd door ${wie} (versie ${cur?.versie}). Herladen met die versie? (Annuleren = jouw versie opslaan en die wijzigingen overschrijven)`)) { location.reload(); saving = false; return; }
+      const { data: d2, error: e2 } = await sb.from('dossiers').update({ state: zonderAi(state), meta: metaVan(state, laatsteKpi), updated_by: user.id }).eq('id', id).select('versie,updated_at').single();
+      if (e2) throw e2; dossier.versie = d2.versie; dossier.updated_at = d2.updated_at;
+    } else { dossier.versie = data.versie; dossier.updated_at = data.updated_at; }
+    dirty = false; setStatus('opgeslagen ' + new Date().toLocaleTimeString('nl-NL'));
   } catch (e) { console.error(e); setStatus('opslaan mislukt: ' + e.message, true); logFout('opslaan', e.message, { soort: 'persist', details: { dossier: dossier?.naam, versie: dossier?.versie } }); }
   saving = false;
+  if (pending && dossier && dossier.id === id) { const p = pending; pending = null; await flush(p, id); }
+}
+/** Bij het sluiten van het tabblad: één directe schrijfactie met keepalive, zonder wachten. */
+function flushBijSluiten(state) {
+  if (!dossier || !user || !dirty || !magSchrijven()) return;
+  const stuur = token => { try { fetch(`${CFG.supabaseUrl}/rest/v1/dossiers?id=eq.${dossier.id}&versie=eq.${dossier.versie}`, { method: 'PATCH', keepalive: true, headers: { apikey: CFG.supabaseKey, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Prefer: 'return=minimal' }, body: JSON.stringify({ state: zonderAi(state), meta: metaVan(state, laatsteKpi), updated_by: user.id }) }); } catch {} };
+  if (laatsteToken) stuur(laatsteToken);
 }
 function setStatus(t, warn=false) { const el = $('#dbStatus'); if (el) { el.textContent = t; el.classList.toggle('warn', warn); } }
 
@@ -187,5 +209,5 @@ function showLogin(onDone) {
 }
 return { sb, init, login, logout, token, get user(){return user}, get profile(){return profile}, get dossier(){return dossier}, listDossiers, openDossier, createDossier, renameDossier, duplicateDossier, deleteDossier,
   herstelUitPrullenbak, definitiefVerwijderen, zetPortefeuille, referentieVan, zetReferentie, wisReferentie, bewaarEvaluatie, evaluatiesVan, wisEvaluatie, hashVan, ledenVan, zetLid, verwijderLid, alleGebruikers, zetGebruikersRol, aiVan, zetAi, zetAlleAi, wisAi, magSchrijven, magBeheren, mijnRolIn,
-  metaVan, backupsVan, herstelDossier, persist, flush, logAudit, logAiRun, logFout, foutSamenvatting, laatsteFouten, aiRunsVan, auditFromDb, getSetting, setSetting, getShared, setShared, get isAdmin(){return isAdmin()}, showLogin, setStatus };
+  metaVan, backupsVan, herstelDossier, persist, flush, flushBijSluiten, annuleerSave, logAudit, logAiRun, logFout, foutSamenvatting, laatsteFouten, aiRunsVan, auditFromDb, getSetting, setSetting, getShared, setShared, get isAdmin(){return isAdmin()}, showLogin, setStatus };
 })();

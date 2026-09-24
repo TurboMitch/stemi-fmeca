@@ -39,7 +39,7 @@ async function start() {
   await ensureDossier(); await U.refreshProjecten();
   renderAll();
   if (!C.state.settings.wizardVoltooid) switchTab('eigenaar');
-  window.addEventListener('beforeunload', () => { if (DB.dossier) DB.flush(C.state); });
+  window.addEventListener('beforeunload', () => { if (DB.dossier) DB.flushBijSluiten(C.state); });
 }
 async function init() {
   C.startFoutafhandeling();

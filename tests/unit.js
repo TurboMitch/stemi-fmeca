@@ -313,6 +313,37 @@ ok('core.js en prep.js laden in Node', !!C && !!P);
   const rapKort = ctx.STEMI_UI.rapportHtml({ jaren: 10, topN: 5, onderbouwing: true, bijlagen: true, audit: false, conditie: false, scenarios: false });
   ok('zonder conditie en scenario\'s schuift de nummering terug', /<h2>5 Onderbouwing/.test(rapKort) && /<h2>6 Bijlagen/.test(rapKort));
 
+  // ---- audit 24-09: Nederlandse getalinvoer, numerieke parameters en robuuste migratie ----
+  console.log('\n-- numNL en invoerhardheid');
+  ok('numNL "1.500" is 1500', C.numNL('1.500') === 1500);
+  ok('numNL "12,5" is 12.5', C.numNL('12,5') === 12.5);
+  ok('numNL "1.234,56" is 1234.56', C.numNL('1.234,56') === 1234.56);
+  ok('numNL "12.5" (Engels) is 12.5', C.numNL('12.5') === 12.5);
+  ok('numNL "€ 2.000" is 2000', C.numNL('€ 2.000') === 2000);
+  ok('numNL van tekst is null', C.numNL('<img>') === null && C.numNL('abc') === null && C.numNL(' ') === null);
+  ok('num van Infinity is null', C.num('Infinity') === null && C.num(' ') === null);
+  {
+    const st = C.emptyState(); st.settings.params.horizon = '<img src=x onerror=alert(1)>'; st.settings.params.startjaar = '2030'; st.settings.rules.tRegels.levensduurDefault = '"><b>';
+    C.setState(st);
+    ok('tekst in horizon wordt de standaard (40)', C.state.settings.params.horizon === 40);
+    ok('numerieke tekst in startjaar wordt een getal', C.state.settings.params.startjaar === 2030);
+    ok('levensduurDefault is altijd een getal', C.state.settings.rules.tRegels.levensduurDefault === 30);
+    st.settings.params.horizon = 0; C.setState(st); ok('horizon 0 wordt 1', C.state.settings.params.horizon === 1);
+    st.settings.params.horizon = 4000000; C.setState(st); C.recompute(); ok('horizon 4.000.000 wordt 100 en rekent door', C.state.settings.params.horizon === 100 && C.calc.jaren.length === 100);
+  }
+  {
+    const st = C.emptyState(); st.settings = { naam: 'kaal', params: { horizon: 10 } };   // onvolledig sjabloon
+    let fout = null; try { C.setState(st); C.recompute(); } catch (e) { fout = e.message; }
+    ok('onvolledige instellingen crashen niet', fout === null, fout || '');
+    ok('ontbrekende blokken zijn aangevuld', C.state.settings.rules?.oVoorstel && C.state.settings.scorekaarten?.O?.length === 10 && Object.keys(C.state.settings.profielen).length > 0);
+    ok('horizon uit het sjabloon blijft staan', C.state.settings.params.horizon === 10);
+  }
+  {
+    C.setState(C.emptyState()); C.recompute();
+    C.setSp(1, 'kostenSpecialist', '1.500', 'mens'); ok('specialist-kosten "1.500" handmatig is 1500', C.getSp(1).kostenSpecialist === 1500);
+    C.setSp(1, 'O', '7', 'ai'); ok('AI-waarde blijft gewoon num', C.getSp(1).O === 7);
+  }
+
   console.log(`\n${mislukt ? mislukt + ' test(s) MISLUKT' : 'alle unit-tests geslaagd'}`);
   process.exit(mislukt ? 1 : 0);
 })();

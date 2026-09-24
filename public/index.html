@@ -4,10 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>STEMI FMECA · MJOP</title>
-<link rel="stylesheet" href="/style.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="/config.js"></script>
+<link rel="stylesheet" href="/style.css?v=14">
+<!-- bibliotheken zelf gehost (SheetJS 0.20.3, supabase-js 2.117.1): geen CDN-afhankelijkheid, vaste versie -->
+<script src="/vendor/xlsx.full.min.js?v=0.20.3"></script>
+<script src="/vendor/supabase.min.js?v=2.117.1"></script>
+<script src="/config.js?v=14"></script>
 </head>
 <body>
 <header class="top">
@@ -66,7 +67,7 @@
 (async () => {
   const files = ['core','db','prep','ui-wizard','ui-inspectie','ui-specialist','ui-mjop','ui-scenario','ui-rapport','ui-kwaliteit','ui-rest','ui-projecten','main'];
   const load = src => new Promise((ok, fail) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => fail(new Error(src)); document.body.appendChild(s); });
-  for (const f of files) { let done = false; for (let i = 0; i < 4 && !done; i++) { try { await load(`/js/${f}.js?v=12${i ? '&r=' + i : ''}`); done = true; } catch (e) { await new Promise(r => setTimeout(r, 400 * (i + 1))); } }
+  for (const f of files) { let done = false; for (let i = 0; i < 4 && !done; i++) { try { await load(`/js/${f}.js?v=14${i ? '&r=' + i : ''}`); done = true; } catch (e) { await new Promise(r => setTimeout(r, 400 * (i + 1))); } }
     if (!done) { document.body.innerHTML = '<p style="padding:20px">Laden mislukt (' + f + '). Herlaad de pagina.</p>'; return; } }
 })();
 </script>

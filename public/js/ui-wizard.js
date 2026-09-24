@@ -139,7 +139,7 @@ function renderTregels(el) {
         <b>Omvangfactor</b><table class="mini"><tbody>${T.omvangFactor.map((x,i)=>`<tr><td class="note">omvang ≥</td><td><input class="n" style="width:56px" data-trof="${i}" data-k="min" value="${x.min}"></td><td class="note">factor</td><td><input class="n" style="width:56px" data-trof="${i}" data-k="factor" value="${x.factor}"></td></tr>`).join('')}</tbody></table></div>
     </div>
     <div class="grid two" style="margin-top:6px">
-      <div class="field"><label>Standaard levensduur als het bouwdeel onbekend is (jaar)</label><input data-tr="levensduurDefault" value="${T.levensduurDefault??''}"></div>
+      <div class="field"><label>Standaard levensduur als het bouwdeel onbekend is (jaar)</label><input data-tr="levensduurDefault" value="${esc(T.levensduurDefault??'')}"></div>
       <div class="field"><label>Standaard degradatiecurve</label><select data-tr="curveDefault">${curveOpt(T.curveDefault)}</select></div>
     </div>
     <p class="note">Curve: <b>lineair</b> restfactor 1−d · <b>progressief</b> (1−d)² – schade versnelt, typisch voor afwerkingen en beschermlagen · <b>degressief</b> √(1−d) – schade vertraagt, typisch voor constructies.</p>
@@ -151,7 +151,7 @@ function renderTregels(el) {
     <div class="tablewrap"><table><thead><tr><th>Bouwdeel</th><th>In dit project</th><th>Levensduur (jr)</th><th>Curve</th><th class="wrap">T bij intensiteit Gevorderd, ontwikkeling onbekend</th></tr></thead><tbody>
     ${lijst.slice(0,80).map(n=>{ const L=C.num(T.levensduur[n]), v=T.curve[n]||T.curveDefault;
       const voorb = C.bepaalT({bouwdeel:n, intensiteit:'Gevorderd'}, {bouwdeel:n});
-      return `<tr class="${zonder.includes(n)?'ovr':''}"><td>${esc(n)}</td><td class="num note">${gebruikt[n]||''}</td><td><input class="n" data-trl="${esc(n)}" value="${L??''}" placeholder="${T.levensduurDefault}"></td><td><select data-trc="${esc(n)}"><option value="">standaard (${T.curveDefault})</option>${['lineair','progressief','degressief'].map(c=>`<option ${c===T.curve[n]?'selected':''}>${c}</option>`).join('')}</select></td><td class="note">${voorb.jaar==null?'—':`${voorb.jaar} jr → ${esc(voorb.klasse)}`}</td></tr>`;}).join('')}
+      return `<tr class="${zonder.includes(n)?'ovr':''}"><td>${esc(n)}</td><td class="num note">${gebruikt[n]||''}</td><td><input class="n" data-trl="${esc(n)}" value="${L??''}" placeholder="${esc(T.levensduurDefault)}"></td><td><select data-trc="${esc(n)}"><option value="">standaard (${T.curveDefault})</option>${['lineair','progressief','degressief'].map(c=>`<option ${c===T.curve[n]?'selected':''}>${c}</option>`).join('')}</select></td><td class="note">${voorb.jaar==null?'—':`${voorb.jaar} jr → ${esc(voorb.klasse)}`}</td></tr>`;}).join('')}
     </tbody></table></div>
   </div>
   <div class="card"><h3 style="margin-top:0">Conditieprognose: effect van een handeling</h3>
@@ -164,7 +164,7 @@ function renderTregels(el) {
     <button class="btn ghost" data-go="systeem">Naar de conditieprognose</button>
   </div>`;
   const herteken = () => { C.save(); C.recompute(); renderTregels(el); };
-  $$('[data-tr]').forEach(i => i.onchange = () => { const k=i.dataset.tr; T[k] = i.type==='checkbox' ? i.checked : (num(i.value) ?? i.value); C.audit({veld:'tRegels.'+k, nieuw:T[k], bron:'mens'}); herteken(); });
+  $$('[data-tr]').forEach(i => i.onchange = () => { const k=i.dataset.tr; T[k] = i.type==='checkbox' ? i.checked : (k==='levensduurDefault' ? (C.numNL(i.value) ?? 30) : (C.numNL(i.value) ?? i.value)); C.audit({veld:'tRegels.'+k, nieuw:T[k], bron:'mens'}); herteken(); });
   $$('[data-trif]').forEach(i => i.onchange = () => { T.intensiteitFractie[i.dataset.trif] = num(i.value) ?? 0; herteken(); });
   $$('[data-trov]').forEach(i => i.onchange = () => { T.ontwikkelingSnelheid[i.dataset.trov] = num(i.value) ?? 1; herteken(); });
   $$('[data-tref]').forEach(i => i.onchange = () => { T.ernstFactor[i.dataset.tref] = num(i.value) ?? 1; herteken(); });
@@ -184,7 +184,7 @@ function renderParams(el) {
   const S = C.state.settings, P = S.params, bel = C.belangen(), prof = S.profielen[P.profiel] || [];
   el.innerHTML = `<div class="grid two">
     <div class="card"><h3 style="margin-top:0">Objectparameters (in te vullen door AM)</h3>
-      ${[['naam','Naam instellingenprofiel','text',S.naam],['profiel','Waardekompas profiel (B6)','select'],['startjaar','Startjaar MJOP (B7)'],['horizon','MJOP horizon in jaar (B8)'],['oRef','O-referentieperiode in jaar (B9) – organisatiekeuze'],['nenSignaal','NEN technisch signaal vanaf conditie (B10)'],['omslagDefault','Default omslagpercentage integraal uitvoeren 0–1 (B13)']].map(([k,l,t,v])=>`<div class="field"><label>${l}</label>${t==='select'?`<select data-param="${k}">${Object.keys(S.profielen).map(p=>`<option ${p===P.profiel?'selected':''}>${p}</option>`).join('')}</select>`:`<input data-param="${k}" value="${esc(t==='text'?v:P[k])}">`}</div>`).join('')}
+      ${[['naam','Naam instellingenprofiel','text',S.naam],['profiel','Waardekompas profiel (B6)','select'],['startjaar','Startjaar MJOP (B7)'],['horizon','MJOP horizon in jaar (B8)'],['oRef','O-referentieperiode in jaar (B9) – organisatiekeuze'],['nenSignaal','NEN technisch signaal vanaf conditie (B10)'],['omslagDefault','Default omslagpercentage integraal uitvoeren 0–1 (B13)']].map(([k,l,t,v])=>`<div class="field"><label>${l}</label>${t==='select'?`<select data-param="${k}">${Object.keys(S.profielen).map(p=>`<option ${p===P.profiel?'selected':''}>${esc(p)}</option>`).join('')}</select>`:`<input data-param="${k}" value="${esc(t==='text'?v:P[k])}">`}</div>`).join('')}
     </div>
     <div class="card"><h3 style="margin-top:0">Financiele parameters (prijspeil, indexering, btw, rendement)</h3>
       <p class="note">Kengetallen en maatregelkosten voer je in op het <b>prijspeil</b>. Het model rekent daarna zelf naar het uitvoeringsjaar (indexering), naar btw en naar contante waarde.</p>
@@ -203,10 +203,10 @@ function renderParams(el) {
     </div>
     <div class="card"><h3 style="margin-top:0">Waardekompas voor dit object</h3>
       <div class="tablewrap"><table><thead><tr><th>Aspect</th><th>Uit profiel</th><th>Minimum (AM)</th><th>Definitief</th><th>Factor</th></tr></thead><tbody>
-      ${ASP.map((a,i)=>`<tr><td>${a}</td><td class="num groen">${prof[i]??''}</td><td><input class="n" data-min="${i}" value="${esc(P.minimum[i])}"></td><td class="num"><b>${bel[i]}</b></td><td class="num">${bel[i]/5}</td></tr>`).join('')}
+      ${ASP.map((a,i)=>`<tr><td>${esc(a)}</td><td class="num groen">${prof[i]??''}</td><td><input class="n" data-min="${i}" value="${esc(P.minimum[i])}"></td><td class="num"><b>${bel[i]}</b></td><td class="num">${bel[i]/5}</td></tr>`).join('')}
       </tbody></table></div><p class="note">Definitief belang = max(profielwaarde, minimum). Waardefactor = belang / 5. Veiligheid en compliance staan standaard op minimum 5 (randvoorwaardelijk).</p>
     </div></div>`;
-  $$('[data-param]').forEach(i => i.onchange = () => { const k=i.dataset.param; if (k==='naam') S.naam=i.value; else P[k] = k==='profiel' ? i.value : (num(i.value) ?? i.value); C.audit({veld:'param.'+k, nieuw:i.value, bron:'mens'}); C.save(); C.recompute(); renderParams(el); });
+  $$('[data-param]').forEach(i => i.onchange = () => { const k=i.dataset.param; if (k==='naam') S.naam=i.value; else if (k==='profiel') P[k] = i.value; else { const v = C.numNL(i.value); if (v == null) { C.toast('Voer een getal in'); renderParams(el); return; } P[k] = k==='horizon' ? Math.min(100, Math.max(1, Math.round(v))) : v; } C.audit({veld:'param.'+k, nieuw:i.value, bron:'mens'}); C.save(); C.recompute(); renderParams(el); });
   $$('[data-min]').forEach(i => i.onchange = () => { P.minimum[+i.dataset.min] = num(i.value) ?? 0; C.save(); C.recompute(); renderParams(el); });
   $$('[data-fin]').forEach(i => i.onchange = () => { const k = i.dataset.fin; const oud = P[k]; P[k] = k === 'btwWeergave' ? i.value : num(i.value); C.audit({veld:'param.'+k, oud, nieuw:P[k], bron:'mens'}); C.save(); C.recompute(); renderParams(el); window.STEMI_UI.renderMjop(); });
   $$('[data-infl]').forEach(i => i.onchange = () => { P.inflatiePerJaar = P.inflatiePerJaar || {}; const v = num(i.value); if (v == null) delete P.inflatiePerJaar[i.dataset.infl]; else P.inflatiePerJaar[i.dataset.infl] = v; C.audit({veld:'param.inflatie.'+i.dataset.infl, nieuw:v, bron:'mens'}); C.save(); C.recompute(); renderParams(el); window.STEMI_UI.renderMjop(); });
@@ -219,7 +219,7 @@ function renderSamenvatting(el) {
     <p class="note">Status: ${S.wizardVoltooid ? '<b>vastgelegd</b>' : '<span class="warn">nog niet vastgelegd</span>'}. Het profiel wordt bij elke berekening gebruikt en gaat mee in JSON-export.</p></div>
     <div class="card"><h3 style="margin-top:0">Profiel exporteren / importeren</h3><p class="note">Zo hergebruik je beleid over meerdere objecten of portefeuilles.</p><button class="btn ghost" id="profExport">Profiel downloaden (JSON)</button> <label class="btn ghost">Profiel laden<input type="file" id="profImport" accept=".json" hidden></label></div></div>`;
   $('#profExport').onclick = () => { const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify(S,null,1)],{type:'application/json'})); a.download=`stemi-profiel-${S.naam.replace(/\W+/g,'_')}.json`; a.click(); };
-  $('#profImport').onchange = e => { const f=e.target.files[0]; if(!f) return; f.text().then(t=>{ const p=JSON.parse(t); if(!p.rules||!p.params) throw new Error('geen profiel'); C.state.settings = p; C.audit({veld:'instellingenprofiel', bron:'mens', nieuw:p.naam, opmerking:'Profiel geïmporteerd'}); C.save(); window.STEMI_UI.renderAll(); C.toast('Profiel geladen'); }).catch(err=>alert('Ongeldig profiel: '+err.message)); };
+  $('#profImport').onchange = e => { const f=e.target.files[0]; if(!f) return; f.text().then(t=>{ const p=JSON.parse(t); if(!p.rules||!p.params) throw new Error('geen profiel'); C.state.settings = C.clone(p); C.setState(C.state); C.audit({veld:'instellingenprofiel', bron:'mens', nieuw:p.naam, opmerking:'Profiel geïmporteerd'}); C.save(); window.STEMI_UI.renderAll(); C.toast('Profiel geladen'); }).catch(err=>alert('Ongeldig profiel: '+err.message)); };
 }
 
 window.STEMI_UI = window.STEMI_UI || {}; window.STEMI_UI.renderEigenaar = render;

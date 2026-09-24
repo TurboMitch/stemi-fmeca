@@ -97,3 +97,17 @@ select d.naam, p.username, l.rol from dossier_leden l
 -- omvang van de projectstate
 select naam, pg_size_pretty(length(state::text)::bigint) from dossiers order by 2 desc;
 ```
+
+## Audit 24 september 2026
+
+- **`herstel_dossier` was door iedere ingelogde gebruiker uit te voeren.** `mag_beheren()` gaf voor een niet-lid `NULL`
+  in plaats van `false`; in een RLS-policy telt `NULL` als geweigerd, maar in een plpgsql-`IF` telt `NOT NULL` als
+  "niet waar", waardoor de controle werd overgeslagen. Alle `mag_*`-functies geven nu altijd `true`/`false` en de
+  controle in `herstel_dossier` staat in een `coalesce(..., false)`. Getest in een teruggedraaide transactie: een
+  niet-lid en een redacteur krijgen nu de foutmelding.
+- `TRUNCATE`, `REFERENCES` en `TRIGGER` zijn ingetrokken voor `anon` en `authenticated` (RLS geldt niet voor TRUNCATE).
+- Ongebruikte tabel `instellingsprofielen` (policy `ALL … true`) verwijderd.
+- Nieuwe tabel `ai_gebruik`: de API-proxy schrijft per aanroep het tokenverbruik weg; het dagbudget telt alléén deze
+  tabel (voorheen `ai_runs`, dat de browser vulde en dus te omzeilen was). Een gebruiker mag alleen eigen rijen lezen en
+  toevoegen; bijwerken en verwijderen kan niemand via de API.
+- `handle_new_user()` heeft nu `pg_temp` in het zoekpad.
