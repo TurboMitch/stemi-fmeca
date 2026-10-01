@@ -344,6 +344,23 @@ ok('core.js en prep.js laden in Node', !!C && !!P);
     C.setSp(1, 'O', '7', 'ai'); ok('AI-waarde blijft gewoon num', C.getSp(1).O === 7);
   }
 
+  console.log('\n-- extra overrides');
+  {
+    C.setState(C.emptyState()); C.recompute();
+    const R = C.state.settings.rules; const fac = C.belangen().map(b => b/5);
+    const laag = [0,0,0,0,0,0,9,0];   // alleen duurzaamheid hoog; RPN waarde blijft laag bij O=1, D=1
+    const zonder = C.prioVan(laag, 1, 1, 20, fac);
+    R.extraOverrides = [{ aspect: 'Duurzaamheid/energie', drempels: [{ min: 9, prio: 'P2' }] }];
+    const met = C.prioVan(laag, 1, 1, 20, fac);
+    ok('zonder extra override blijft het P5', zonder.prio === 'P5', zonder.prio);
+    ok('extra override op duurzaamheid tilt naar P2', met.prio === 'P2' && met.drivers.includes('Duurzaamheid/energie'), met.prio + ' ' + met.drivers.join(','));
+    const onder = C.prioVan([0,0,0,0,0,0,8,0], 1, 1, 20, fac);
+    ok('onder de drempel doet de override niets', onder.prio === 'P5');
+    R.extraOverrides = [{ aspect: 'Bestaat niet', drempels: [{ min: 1, prio: 'P1' }] }];
+    ok('override op onbekend aspect wordt genegeerd', C.prioVan(laag, 1, 1, 20, fac).prio === 'P5');
+    R.extraOverrides = [];
+  }
+
   console.log(`\n${mislukt ? mislukt + ' test(s) MISLUKT' : 'alle unit-tests geslaagd'}`);
   process.exit(mislukt ? 1 : 0);
 })();

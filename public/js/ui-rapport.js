@@ -5,10 +5,10 @@ const D = () => new Date().toLocaleDateString('nl-NL', { day:'numeric', month:'l
 
 /** huisstijl staat in de gedeelde instellingen, zodat elk project hetzelfde rapport oplevert */
 /** alleen een hex-kleur mag de stylesheet in; alles anders valt terug op de standaardkleur */
-const kleurOk = k => /^#[0-9a-f]{6}$/i.test(String(k||'')) ? k : '#12776a';
+const kleurOk = k => /^#[0-9a-f]{6}$/i.test(String(k||'')) ? k : '#F5784B';
 /** een logo is uitsluitend een data-URL van een afbeelding (komt uit de gedeelde instellingen, dus van een collega) */
 const logoOk = l => /^data:image\/(png|jpeg|gif|webp|svg\+xml);base64,[a-z0-9+/=]+$/i.test(String(l||'')) ? l : '';
-function hs() { C.cfg.huisstijl = Object.assign({ bedrijf:'STEMI', kleur:'#12776a', logo:'', voettekst:'' }, C.cfg.huisstijl || {}); const K = C.cfg.huisstijl; K.kleur = kleurOk(K.kleur); K.logo = logoOk(K.logo); return K; }
+function hs() { C.cfg.huisstijl = Object.assign({ bedrijf:'STEMI', kleur:'#F5784B', logo:'', voettekst:'' }, C.cfg.huisstijl || {}); const K = C.cfg.huisstijl; K.kleur = kleurOk(K.kleur); K.logo = logoOk(K.logo); return K; }
 const opts = () => { C.cfg.rapport = Object.assign({ jaren:15, onderbouwing:true, audit:true, bijlagen:true, topN:10, conditie:true, scenarios:true }, C.cfg.rapport || {}); return C.cfg.rapport; };
 
 // ---------- bouwstenen ----------
@@ -90,6 +90,7 @@ function rapportHtml(o = {}) {
       ['Prioriteit uit RPN-waarde', S.rules.rpn.map(x=>`${x.prio} ≥ ${x.min}`).join(' · ')],
       ['Veiligheidsoverride', S.rules.safety.map(x=>`${x.prio} bij effect ≥ ${x.min}`).join(' · ')],
       ['Compliance-override', S.rules.compliance.map(x=>`${x.prio} bij effect ≥ ${x.min}`).join(' · ')],
+      ...(S.rules.extraOverrides||[]).map(x => [`Override ${x.aspect}`, (x.drempels||[]).map(d=>`${d.prio} bij effect ≥ ${d.min}`).join(' · ')]),
       ['Prioriteit uit faalmoment T', S.rules.tPrio.map(x=>`${x.prio} bij T ≤ ${x.max} jaar`).join(' · ')],
       ['Laatste acceptabele jaar', C.PRIOS.map(p=>`${p}: ${S.rules.laatsteJaar[p]==null?'—':'+'+S.rules.laatsteJaar[p]+' jr'}`).join(' · ')],
       ['Omslag naar integraal uitvoeren', pct(P.omslagDefault) + ' van de hoeveelheid met gebrek'],
@@ -206,9 +207,11 @@ function rapportHtml(o = {}) {
   const css = `
   /* het rapport is een zelfstandig document: de variabelen uit de app-stylesheet hier opnieuw zetten,
      anders vallen de staven in het diagram terug op zwart */
-  :root { --accent: ${kleurOk(K.kleur)}; --line: #d5dbe0; --rood: #c0392b; }
+  :root { --accent: ${kleurOk(K.kleur)}; --line: #E3DECC; --rood: #c0392b; }
   @page { size: A4 portrait; margin: 18mm 14mm; }
-  body { font: 10pt/1.45 "Segoe UI", Arial, sans-serif; color:#1b1f23; margin:0; padding:14px; }
+  @font-face{font-family:'Montserrat';font-weight:400;font-display:swap;src:url(${(typeof location !== "undefined" && location.origin) || ""}/vendor/fonts/montserrat-400.woff2) format('woff2')}@font-face{font-family:'Montserrat';font-weight:600;font-display:swap;src:url(${(typeof location !== "undefined" && location.origin) || ""}/vendor/fonts/montserrat-600.woff2) format('woff2')}@font-face{font-family:'Montserrat';font-weight:700;font-display:swap;src:url(${(typeof location !== "undefined" && location.origin) || ""}/vendor/fonts/montserrat-700.woff2) format('woff2')}
+  body { font: 10pt/1.45 "Montserrat", "Segoe UI", Arial, sans-serif; color:#1F2328; margin:0; padding:14px; }
+  h1,h2,h3,h4 { font-weight:600; }
   h1 { font-size: 24pt; margin:.2em 0 .1em; color:${kleurOk(K.kleur)}; }
   h2 { font-size: 14pt; margin:1.6em 0 .4em; color:${kleurOk(K.kleur)}; border-bottom:2px solid ${kleurOk(K.kleur)}; padding-bottom:3px; page-break-after:avoid; }
   h3 { font-size: 11.5pt; margin:1.2em 0 .3em; page-break-after:avoid; }

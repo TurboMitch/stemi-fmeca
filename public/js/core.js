@@ -50,6 +50,7 @@ function defaultRules() {
     oVoorstel: { basis:2, intensiteit:{'Beginstadium':0,'Duidelijk waarneembaar':1,'Gevorderd':2,'Eindstadium':3}, omvang:[{min:0.5,add:2},{min:0.2,add:1}], ontwikkeling:{'Stabiel':0,'Langzaam':1,'Progressief':2,'Snel / actief':3}, conditieVanaf:null, conditieAdd:0 },
     dVoorstel: {'Volledig':2,'Deels':5,'Niet':8},
     safetyAspect: 'Veiligheid', complianceAspect: 'Compliance',
+    extraOverrides: [],   // organisatie-eigen overrides op andere aspecten: [{ aspect, drempels: [{min, prio}] }]
     tKlassen: [{klasse:'Reeds aanwezig',jaar:0},{klasse:'< 1 jaar',jaar:0.5},{klasse:'1–3 jaar',jaar:2},{klasse:'3–5 jaar',jaar:4},{klasse:'> 5 jaar',jaar:8}],
     tRegels: {
       actief: true,
@@ -320,10 +321,12 @@ function prioVan(effect, O, D, Tjaar, fac) {
   const safety = prioFromThresholds(R.safety, eff[iS], '') || '';
   const compliance = prioFromThresholds(R.compliance, eff[iC], '') || '';
   const tPrio = prioT(Tjaar);
-  const cand = [basis, safety, compliance, tPrio].filter(Boolean);
+  // organisatie-eigen overrides op willekeurige aspecten (zelfde mechaniek als safety/compliance)
+  const extra = (R.extraOverrides || []).map(x => { const i = ASP.indexOf(x.aspect); return { aspect: x.aspect, prio: i < 0 ? '' : (prioFromThresholds(x.drempels || [], eff[i], '') || '') }; }).filter(x => x.prio);
+  const cand = [basis, safety, compliance, tPrio, ...extra.map(x => x.prio)].filter(Boolean);
   const prio = PRIOS.find(p => cand.includes(p)) || null;
-  return { effect: eff, Stech, RPNtech, impact, Swaarde, RPNwaarde, basis, safety, compliance, tPrio, prio,
-    drivers: [basis===prio&&'RPN', safety===prio&&'Safety', compliance===prio&&'Compliance', tPrio===prio&&'Tijd'].filter(Boolean),
+  return { effect: eff, Stech, RPNtech, impact, Swaarde, RPNwaarde, basis, safety, compliance, tPrio, prio, extra,
+    drivers: [basis===prio&&'RPN', safety===prio&&'Safety', compliance===prio&&'Compliance', tPrio===prio&&'Tijd', ...extra.filter(x => x.prio === prio).map(x => x.aspect)].filter(Boolean),
     domTech: ASP[eff.indexOf(Stech)], domWaarde: Swaarde === 0 ? 'Geen waarde-impact' : ASP[impact.indexOf(Swaarde)] };
 }
 
@@ -415,7 +418,7 @@ function recompute() {
     const r = { id: insp.id, insp, sp, bes, libE, omvang, kostenElement, kostenLokaal, omslagEff, begrotingswijze, begrHoev, eersteVoorstel,
       oSys, oInfo, dSys, tKlSys, tJaarSys, tTxtSys, tInfo, O, D, Tklasse, Tjaar, effect, faalwijze, kostenSpec, definitieveKosten,
       kostenbron: kostenSpec != null ? 'Technisch specialist' : 'Inspectie/softwarevoorstel',
-      Stech, RPNtech, impact, Swaarde, RPNwaarde, basis, safety, compliance, tPrio, nenSignaal, prio, laatsteJaar, deadline, domTech, domWaarde,
+      Stech, RPNtech, impact, Swaarde, RPNwaarde, basis, safety, compliance, extra: pv.extra, tPrio, nenSignaal, prio, laatsteJaar, deadline, domTech, domWaarde,
       status: compleet ? 'Compleet' : 'Aanvullen', aiStatus, drivers: pv.drivers };
     r.maatregelen = maatregelenVan(r).map(m => ({...m, jaren: expandCyclus(m, jaren)}));
     r.planJaar = r.maatregelen[0]?.jaar ?? null;
@@ -608,6 +611,7 @@ function addAspect(naam, kort, omschrijving) {
 }
 function removeAspect(i) {
   const S = state.settings; if (S.aspecten.length <= 1) return false;
+  const weg = S.aspecten[i]?.naam; S.rules.extraOverrides = (S.rules.extraOverrides || []).filter(x => x.aspect !== weg);
   S.aspecten.splice(i, 1); Object.values(S.profielen).forEach(p => p.splice(i, 1)); S.params.minimum.splice(i, 1);
   S.scorekaarten.S.forEach(s => s.aspecten.splice(i, 1)); state.specialist.forEach(sp => { if (Array.isArray(sp.effect) && sp.effect.length > i) sp.effect.splice(i, 1); });
   Object.values(state.ai || {}).forEach(a => { if (Array.isArray(a.effect) && a.effect.length > i) a.effect.splice(i, 1); });
@@ -633,6 +637,7 @@ function migrateSettings(S) {
   if (S.params.prijspeil == null) S.params.prijspeil = S.params.startjaar;
   if (!S.rules.oVoorstel.ontwikkeling) { S.rules.oVoorstel = defaultRules().oVoorstel; S.rules.dVoorstel = defaultRules().dVoorstel; }
   if (!S.rules.safetyAspect) { S.rules.safetyAspect = 'Veiligheid'; S.rules.complianceAspect = 'Compliance'; }
+  if (!Array.isArray(S.rules.extraOverrides)) S.rules.extraOverrides = [];
   if (!S.scorekaarten.O[0].omschrijving) { S.scorekaarten.O = clone(seed.scorekaarten.O); S.scorekaarten.Odefinitie = seed.scorekaarten.Odefinitie; }
   if (!S.scorekaarten.D[0].criterium || S.scorekaarten.D.length !== 10 || !S.scorekaarten.Ddefinitie) { S.scorekaarten.D = clone(seed.scorekaarten.D); S.scorekaarten.Ddefinitie = seed.scorekaarten.Ddefinitie; }
   if (!S.scorekaarten.belangSchaal) S.scorekaarten.belangSchaal = clone(seed.scorekaarten.belangSchaal);
